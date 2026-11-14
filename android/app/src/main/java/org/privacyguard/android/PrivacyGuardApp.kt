@@ -33,9 +33,12 @@ class PrivacyGuardApp : Application(), Configuration.Provider {
             return
         }
 
-        // Initialize HiddenApiBypass exemptions in the main process
+        // Initialize HiddenApiBypass scoped exemptions in the main process
         try {
-            HiddenApiBypass.addHiddenApiExemptions("")
+            HiddenApiBypass.addHiddenApiExemptions(
+                "Landroid/net/IConnectivityManager",
+                "Landroid/content/pm/"
+            )
         } catch (t: Throwable) {
             Log.e(TAG, "Failed applying HiddenApiBypass exemptions", t)
         }

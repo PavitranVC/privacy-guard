@@ -13,6 +13,8 @@ captures/
 # Keys, binaries & large ML artifacts
 *.keystore
 *.jks
+keystore.properties
+**/keystore.properties
 *.apk
 *.aab
 *.onnx

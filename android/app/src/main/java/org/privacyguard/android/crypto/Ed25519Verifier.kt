@@ -1,18 +1,18 @@
 package org.privacyguard.android.crypto
 
-import android.util.Base64
 import java.security.KeyFactory
 import java.security.PublicKey
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
 
 object Ed25519Verifier {
 
     // Pinned X.509 SPKI Ed25519 public key
-    private const val PINNED_PUB_KEY_BASE64 = "MCowBQYDK2VwAyEACP2r7c1ApFzKAxquv7K0Piq8zWDm4huiS8xB+iTreUY="
+    const val PINNED_PUB_KEY_BASE64 = "MCowBQYDK2VwAyEAgCYpThvpyHUz6FbXD+eFlCHG818ajDs/UOcGH6HV6ew="
 
     private val publicKey: PublicKey by lazy {
-        val keyBytes = Base64.decode(PINNED_PUB_KEY_BASE64, Base64.DEFAULT)
+        val keyBytes = Base64.getDecoder().decode(PINNED_PUB_KEY_BASE64)
         val keySpec = X509EncodedKeySpec(keyBytes)
         KeyFactory.getInstance("Ed25519").generatePublic(keySpec)
     }

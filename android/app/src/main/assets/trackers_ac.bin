@@ -1,5 +1,14 @@
-TRACKER_AC_GENESIS_V1
+TRACKER_AC_GENESIS_V2
 com.google.android.gms.measurement
+com.google.firebase.analytics
 com.facebook.appevents
 com.adjust.sdk
 com.appsflyer
+com.applovin
+com.unity3d.ads
+com.kochava.base
+io.branch.referral
+com.flurry.android
+com.criteo
+com.mbridge.msdk
+com.ironsource

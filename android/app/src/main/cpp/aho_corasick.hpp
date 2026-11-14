@@ -3,15 +3,17 @@
 #include <string>
 #include <vector>
 #include <queue>
-#include <unordered_map>
 #include <unordered_set>
 #include <sstream>
+#include <cstdint>
+#include <cstring>
+#include <algorithm>
 
 namespace privacyguard {
 
-struct AcNode {
-    std::unordered_map<char, int> next;
-    int fail = 0;
+struct FlatAcNode {
+    uint32_t next[256] = {0};
+    uint32_t fail = 0;
     std::vector<std::string> output;
 };
 
@@ -29,66 +31,75 @@ public:
         std::string line;
 
         while (std::getline(stream, line)) {
-            // Trim carriage return if present
-            if (!line.empty() && line.back() == '\r') {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
                 line.pop_back();
             }
             if (line.empty() || line[0] == '#' || line.rfind("TRACKER_AC_", 0) == 0) {
                 continue;
             }
-            addPattern(line);
+
+            // Dotted pattern
+            addPattern(line, line);
+
+            // Slash pattern: com.facebook.appevents -> com/facebook/appevents/
+            std::string slashPattern = line;
+            std::replace(slashPattern.begin(), slashPattern.end(), '.', '/');
+            if (slashPattern.back() != '/') {
+                slashPattern += '/';
+            }
+            addPattern(slashPattern, line);
         }
 
         buildFailureLinks();
     }
 
-    void addPattern(const std::string& pattern) {
-        if (pattern.empty()) return;
+    void addPattern(const std::string& pattern, const std::string& trackerId) {
+        if (pattern.empty() || nodes_.size() >= 65536) return;
 
-        int curr = 0;
-        for (char c : pattern) {
-            auto it = nodes_[curr].next.find(c);
-            if (it == nodes_[curr].next.end()) {
-                int nextNode = static_cast<int>(nodes_.size());
+        uint32_t curr = 0;
+        for (unsigned char c : pattern) {
+            if (nodes_[curr].next[c] == 0) {
+                if (nodes_.size() >= 65536) return;
+                uint32_t nextNode = static_cast<uint32_t>(nodes_.size());
                 nodes_.emplace_back();
                 nodes_[curr].next[c] = nextNode;
                 curr = nextNode;
             } else {
-                curr = it->second;
+                curr = nodes_[curr].next[c];
             }
         }
-        nodes_[curr].output.push_back(pattern);
+        nodes_[curr].output.push_back(trackerId);
     }
 
     void buildFailureLinks() {
-        std::queue<int> q;
-        for (const auto& [c, nextNode] : nodes_[0].next) {
-            nodes_[nextNode].fail = 0;
-            q.push(nextNode);
+        std::queue<uint32_t> q;
+        for (int c = 0; c < 256; ++c) {
+            uint32_t nextNode = nodes_[0].next[c];
+            if (nextNode != 0) {
+                nodes_[nextNode].fail = 0;
+                q.push(nextNode);
+            }
         }
 
         while (!q.empty()) {
-            int u = q.front();
+            uint32_t u = q.front();
             q.pop();
 
-            for (const auto& [c, v] : nodes_[u].next) {
-                int f = nodes_[u].fail;
-                while (f > 0 && nodes_[f].next.find(c) == nodes_[f].next.end()) {
-                    f = nodes_[f].fail;
-                }
-                auto it = nodes_[f].next.find(c);
-                if (it != nodes_[f].next.end() && it->second != v) {
-                    nodes_[v].fail = it->second;
-                } else {
-                    nodes_[v].fail = 0;
-                }
+            for (int c = 0; c < 256; ++c) {
+                uint32_t v = nodes_[u].next[c];
+                if (v != 0) {
+                    uint32_t f = nodes_[u].fail;
+                    while (f > 0 && nodes_[f].next[c] == 0) {
+                        f = nodes_[f].fail;
+                    }
+                    nodes_[v].fail = nodes_[f].next[c];
 
-                // Append output from failure state
-                for (const auto& out : nodes_[nodes_[v].fail].output) {
-                    nodes_[v].output.push_back(out);
+                    // Merge output from failure link
+                    for (const auto& out : nodes_[nodes_[v].fail].output) {
+                        nodes_[v].output.push_back(out);
+                    }
+                    q.push(v);
                 }
-
-                q.push(v);
             }
         }
     }
@@ -96,18 +107,13 @@ public:
     void search(const uint8_t* data, size_t len, std::unordered_set<std::string>& matches) const {
         if (nodes_.empty() || !data || len == 0) return;
 
-        int state = 0;
+        uint32_t state = 0;
         for (size_t i = 0; i < len; ++i) {
-            char c = static_cast<char>(data[i]);
-            while (state > 0 && nodes_[state].next.find(c) == nodes_[state].next.end()) {
+            unsigned char c = data[i];
+            while (state > 0 && nodes_[state].next[c] == 0) {
                 state = nodes_[state].fail;
             }
-            auto it = nodes_[state].next.find(c);
-            if (it != nodes_[state].next.end()) {
-                state = it->second;
-            } else {
-                state = 0;
-            }
+            state = nodes_[state].next[c];
 
             if (!nodes_[state].output.empty()) {
                 for (const auto& pattern : nodes_[state].output) {
@@ -118,7 +124,7 @@ public:
     }
 
 private:
-    std::vector<AcNode> nodes_;
+    std::vector<FlatAcNode> nodes_;
 };
 
 } // namespace privacyguard

@@ -12,31 +12,50 @@ import kotlin.system.exitProcess
 @Keep
 class ShizukuShellService : IShellService.Stub() {
 
-    private val pool = Executors.newFixedThreadPool(2)
+    private val pool = Executors.newCachedThreadPool()
 
     override fun exec(cmd: Array<out String>?): ShellResult {
         if (cmd == null || cmd.isEmpty()) {
             return ShellResult(-1, "", "Empty command")
         }
 
-        val binary = cmd[0]
-        if (!ALLOWED_BINARIES.contains(binary)) {
-            return ShellResult(-1, "", "Binary not in allowlist: $binary")
+        val binary = cmd[0].removePrefix("/system/bin/")
+        val subcmd = if (cmd.size > 1) cmd[1] else ""
+
+        val pair = "$binary $subcmd".trim()
+        val isAllowed = ALLOWED_COMMAND_PREFIXES.any { pair == it || pair.startsWith("$it ") } ||
+                (ALLOWED_BINARIES.contains(binary) && (subcmd == "help" || subcmd == "--help"))
+
+        if (!isAllowed) {
+            return ShellResult(-1, "", "Command not in allowlist: $pair")
+        }
+
+        // Validate package and component arguments
+        for (i in 2 until cmd.size) {
+            val arg = cmd[i]
+            if (arg.startsWith("-")) continue
+            if (arg.contains("/") && !COMPONENT_REGEX.matches(arg)) {
+                return ShellResult(-1, "", "Invalid component argument: $arg")
+            } else if (!arg.contains("/") && !arg.all { it.isDigit() } && !PKG_REGEX.matches(arg) &&
+                       !arg.equals("restricted", ignoreCase = true) && !arg.equals("ignore", ignoreCase = true) &&
+                       !arg.equals("true", ignoreCase = true) && !arg.equals("false", ignoreCase = true) &&
+                       !arg.equals("exit-info", ignoreCase = true)) {
+                return ShellResult(-1, "", "Invalid package argument: $arg")
+            }
         }
 
         return try {
             val process = Runtime.getRuntime().exec(cmd)
-            // Immediately close stdin to avoid hanging processes waiting for input
             process.outputStream.close()
 
-            // Drain stdout and stderr concurrently with a strict 256 KB cap
+            // Drain stdout and stderr concurrently until EOF while capping retained output at 256 KB
             val stdoutFuture = pool.submit<String> { drainStreamBounded(process.inputStream, STREAM_CAP_BYTES) }
             val stderrFuture = pool.submit<String> { drainStreamBounded(process.errorStream, STREAM_CAP_BYTES) }
 
             val finished = process.waitFor(10, TimeUnit.SECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                val partialStdout = try { stdoutFuture.get(500, TimeUnit.MILLISECONDS) } catch (e: Exception) { "" }
+                val partialStdout = try { stdoutFuture.get(500, TimeUnit.MILLISECONDS) } catch (_: Exception) { "" }
                 return ShellResult(-124, partialStdout, "TIMEOUT (10s exceeded)")
             }
 
@@ -53,7 +72,7 @@ class ShizukuShellService : IShellService.Stub() {
     override fun destroy() {
         try {
             pool.shutdownNow()
-        } catch (ignored: Throwable) {}
+        } catch (_: Throwable) {}
         exitProcess(0)
     }
 
@@ -64,14 +83,11 @@ class ShizukuShellService : IShellService.Stub() {
             var totalRead = 0
             while (true) {
                 val read = input.read(buffer)
-                if (read == -1) break
-                val toWrite = minOf(read, maxBytes - totalRead)
+                if (read == -1) break // Keep reading until EOF to prevent SIGPIPE on writer
+                val toWrite = minOf(read, maxOf(0, maxBytes - totalRead))
                 if (toWrite > 0) {
                     output.write(buffer, 0, toWrite)
                     totalRead += toWrite
-                }
-                if (totalRead >= maxBytes) {
-                    break
                 }
             }
             output.toString(Charsets.UTF_8.name())
@@ -79,12 +95,23 @@ class ShizukuShellService : IShellService.Stub() {
     }
 
     companion object {
-        private const val STREAM_CAP_BYTES = 262_144 // 256 KB max payload to prevent TransactionTooLargeException
-        private val ALLOWED_BINARIES = setOf(
-            "/system/bin/cmd", "cmd",
-            "/system/bin/pm", "pm",
-            "/system/bin/am", "am",
-            "/system/bin/dumpsys", "dumpsys"
+        private const val STREAM_CAP_BYTES = 262_144 // 256 KB cap
+        private val PKG_REGEX = Regex("^[a-zA-Z0-9_.]+$")
+        private val COMPONENT_REGEX = Regex("^[a-zA-Z0-9_.$]+/[a-zA-Z0-9_.$]+$")
+
+        private val ALLOWED_BINARIES = setOf("cmd", "pm", "am", "dumpsys")
+
+        private val ALLOWED_COMMAND_PREFIXES = setOf(
+            "cmd connectivity",
+            "cmd appops",
+            "cmd package",
+            "pm disable-user",
+            "pm default-state",
+            "pm enable",
+            "pm disable",
+            "am kill",
+            "am set-standby-bucket",
+            "dumpsys activity"
         )
     }
 }

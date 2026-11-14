@@ -12,176 +12,171 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.privacyguard.android.BuildConfig
 import org.privacyguard.android.data.AppDatabase
 import org.privacyguard.android.data.entity.PolicyOp
 import org.privacyguard.android.service.IShellService
+import org.privacyguard.android.service.ShellResult
 import org.privacyguard.android.work.CrashWatchdogWorker
 import rikka.shizuku.Shizuku
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class ShizukuManager private constructor(private val appContext: Context) {
 
-    private val ioSingle = Dispatchers.IO.limitedParallelism(1)
-    private val scope = CoroutineScope(SupervisorJob() + ioSingle)
+    // Single-thread serialized executor for all Shizuku Binder mutations
+    private val singleThreadExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "PrivacyGuard-Shizuku-Executor")
+    }
+    val ioSingle: CoroutineDispatcher = singleThreadExecutor.asCoroutineDispatcher()
+    private val scope = CoroutineScope(ioSingle)
 
     @Volatile
     private var shellService: IShellService? = null
 
-    private val _isServiceBound = MutableStateFlow(false)
-    val isServiceBound: StateFlow<Boolean> = _isServiceBound.asStateFlow()
+    @Volatile
+    private var isBinding = false
 
-    private var rebindAttempts = 0
+    private val userServiceArgs = Shizuku.UserServiceArgs(
+        ComponentName(BuildConfig.APPLICATION_ID, ShizukuShellService::class.java.name)
+    )
+        .daemon(false)
+        .processNameSuffix("shizuku")
+        .debuggable(BuildConfig.DEBUG)
+        .version(BuildConfig.VERSION_CODE)
 
-    private val serviceConnection = object : ServiceConnection {
+    private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.i(TAG, "Shizuku UserService connected")
             shellService = IShellService.Stub.asInterface(service)
-            _isServiceBound.value = true
-            rebindAttempts = 0
+            isBinding = false
 
             scope.launch {
-                probeAndCacheCapabilities()
-                verifyAppliedOpsOnConnect()
+                // Probe capabilities on connect
+                val serviceRef = shellService
+                if (serviceRef != null) {
+                    val caps = ShellOps.probeCapabilities(serviceRef)
+                    val db = AppDatabase.getInstance(appContext)
+                    db.capabilityDao().upsertAll(caps)
+                }
+
+                // Verify live state against applied ops to detect reboot resets or drift
+                verifyDriftOnConnect()
+                drainRunnableOps()
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.w(TAG, "Shizuku UserService disconnected")
             shellService = null
-            _isServiceBound.value = false
-            scheduleRebind()
+            isBinding = false
         }
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        Log.i(TAG, "Shizuku binder received")
         checkAndBindUserService()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        Log.w(TAG, "Shizuku binder dead")
-        _isServiceBound.value = false
         shellService = null
-        scheduleRebind()
+        isBinding = false
     }
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
-            Log.i(TAG, "Shizuku permission granted")
             checkAndBindUserService()
         }
     }
 
     fun init() {
-        Shizuku.addBinderReceivedListener(binderReceivedListener)
+        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionResultListener)
-        if (Shizuku.pingBinder()) {
-            checkAndBindUserService()
-        }
+        checkAndBindUserService()
     }
 
     fun isReady(): Boolean {
-        return Shizuku.pingBinder() &&
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED &&
-                shellService != null
+        return try {
+            Shizuku.pingBinder() &&
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED &&
+                    shellService != null &&
+                    shellService?.asBinder()?.isBinderAlive == true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
-    fun getService(): IShellService? = shellService
+    fun requestPermission(requestCode: Int) {
+        if (Shizuku.pingBinder() && Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            Shizuku.requestPermission(requestCode)
+        }
+    }
 
     private fun checkAndBindUserService() {
         if (!Shizuku.pingBinder()) return
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
+        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) return
 
-        val componentName = ComponentName(appContext, ShizukuShellService::class.java)
-        val args = Shizuku.UserServiceArgs(componentName)
-            .daemon(false)
-            .processNameSuffix("shell")
-            .debuggable(BuildConfig.DEBUG)
-            .version(1)
-
-        try {
-            Shizuku.bindUserService(args, serviceConnection)
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed binding Shizuku UserService", e)
-            scheduleRebind()
+        if (shellService == null && !isBinding) {
+            isBinding = true
+            try {
+                Shizuku.bindUserService(userServiceArgs, userServiceConnection)
+            } catch (t: Throwable) {
+                isBinding = false
+                Log.e(TAG, "Failed binding Shizuku UserService", t)
+            }
         }
     }
 
-    private fun scheduleRebind() {
-        scope.launch {
-            rebindAttempts++
-            val backoffMs = minOf(1000L shl minOf(rebindAttempts, 6), 60_000L)
-            delay(backoffMs)
-            checkAndBindUserService()
+    suspend fun exec(cmd: Array<out String>): ShellResult = withContext(ioSingle) {
+        val service = shellService ?: return@withContext ShellResult(-1, "", "Service not connected")
+        service.exec(cmd)
+    }
+
+    suspend fun drainRunnableOps() = withContext(ioSingle) {
+        if (!isReady()) return@withContext
+        val db = AppDatabase.getInstance(appContext)
+        val now = System.currentTimeMillis()
+        val runnable = db.policyOpDao().getRunnableOps(now, limit = 20)
+        for (op in runnable) {
+            executePolicyOp(op.id)
         }
     }
 
-    private suspend fun probeAndCacheCapabilities() = withContext(ioSingle) {
-        val service = shellService ?: return@withContext
-        try {
-            val capabilities = ShellOps.probeCapabilities(service)
-            val db = AppDatabase.getInstance(appContext)
-            db.capabilityDao().insertOrUpdateAll(capabilities)
-        } catch (e: Throwable) {
-            Log.e(TAG, "Capability probe failed", e)
-        }
-    }
-
-    /**
-     * Re-enqueue all APPLIED packages for drift check upon binder connection,
-     * as runtime firewall chains reset across reboots.
-     */
-    private suspend fun verifyAppliedOpsOnConnect() = withContext(ioSingle) {
+    private suspend fun verifyDriftOnConnect() = withContext(ioSingle) {
         val db = AppDatabase.getInstance(appContext)
         val appliedOps = db.policyOpDao().getByStatus(PolicyOp.STATUS_APPLIED)
         val now = System.currentTimeMillis()
         for (op in appliedOps) {
-            db.reconcileRequestDao().upsertRequest(op.pkg, now)
+            db.reconcileRequestDao().upsertRequestWithSeq(op.pkg, now, 0L)
         }
     }
 
-    /**
-     * Executes a policy operation strictly on the single-thread serialized executor
-     * with live package version verification, accurate gen tracking, and error classification.
-     */
     suspend fun executePolicyOp(opId: Long): Boolean = withContext(ioSingle) {
-        if (!isReady()) {
-            return@withContext false
-        }
+        if (!isReady()) return@withContext false
         val service = shellService ?: return@withContext false
         val db = AppDatabase.getInstance(appContext)
         val op = db.policyOpDao().getById(opId) ?: return@withContext false
 
-        // Atomically claim op: updates status to APPLYING and increments gen
         val leaseUntilMs = System.currentTimeMillis() + 60_000L
-        val claimed = db.policyOpDao().claimOp(op.id, op.gen, leaseUntilMs)
-        if (claimed != 1) {
-            return@withContext false
-        }
+        val claimed = db.policyOpDao().claimOp(op.id, op.gen, leaseUntilMs, System.currentTimeMillis())
+        if (claimed != 1) return@withContext false
 
-        // Accurately track active generation after claim
         val activeGen = op.gen + 1
-
-        // Live check: re-verify live (versionCode, lastUpdateTime)
         val pm = appContext.packageManager
         val livePkgInfo = try {
             pm.getPackageInfo(op.pkg, 0)
-        } catch (e: PackageManager.NameNotFoundException) {
-            val rows = db.policyOpDao().markFailedPermanent(op.id, activeGen, "PACKAGE_NOT_FOUND", null)
-            check(rows == 1) { "Failed updating op state" }
+        } catch (_: PackageManager.NameNotFoundException) {
+            withContext(NonCancellable) {
+                db.policyOpDao().markFailedPermanent(op.id, activeGen, "PACKAGE_NOT_FOUND")
+            }
             return@withContext false
         }
 
@@ -189,23 +184,33 @@ class ShizukuManager private constructor(private val appContext: Context) {
         val liveLastUpdate = livePkgInfo.lastUpdateTime
 
         if (liveVersionCode != op.versionCode || liveLastUpdate != op.lastUpdateTime) {
-            // Package updated or drifted -> mark SUPERSEDED and re-enqueue reconcile request
-            val rows = db.policyOpDao().markDriftSuperseded(op.id, activeGen, "Live versionCode=$liveVersionCode, lastUpdateTime=$liveLastUpdate")
-            check(rows == 1) { "Failed updating op state to SUPERSEDED" }
-            db.reconcileRequestDao().upsertRequest(op.pkg, System.currentTimeMillis())
+            withContext(NonCancellable) {
+                db.policyOpDao().resetForNewVersion(op.id, liveVersionCode, liveLastUpdate)
+                db.reconcileRequestDao().upsertRequestWithSeq(op.pkg, System.currentTimeMillis(), 0L)
+            }
             return@withContext false
         }
+
+        var opSucceeded = false
+        var rowsUpdated = 0
 
         try {
             when (op.op) {
                 "isolate_wifi" -> {
-                    val result = ShellOps.isolatePackageNetworking(appContext, service, op.pkg)
-                    if (result == ShellOps.IsolationResult.UNISOLATABLE_ON_WIFI) {
-                        val rows = db.policyOpDao().markFailedPermanent(op.id, activeGen, "UNISOLATABLE_ON_WIFI", result.statusString)
-                        check(rows == 1)
-                    } else {
-                        val rows = db.policyOpDao().markApplied(op.id, activeGen, result.statusString, null)
-                        check(rows == 1)
+                    val result = ShellOps.isolatePackageNetworking(appContext, service, op.pkg, db.capabilityDao())
+                    withContext(NonCancellable) {
+                        rowsUpdated = when (result) {
+                            ShellOps.IsolationResult.UNISOLATABLE_ON_WIFI ->
+                                db.policyOpDao().markFailedPermanent(op.id, activeGen, result.statusString)
+                            ShellOps.IsolationResult.APPOPS_PARTIAL -> {
+                                opSucceeded = true
+                                db.policyOpDao().markAppliedPartial(op.id, activeGen, result.statusString)
+                            }
+                            else -> {
+                                opSucceeded = true
+                                db.policyOpDao().markApplied(op.id, activeGen, result.statusString)
+                            }
+                        }
                     }
                 }
 
@@ -214,47 +219,55 @@ class ShizukuManager private constructor(private val appContext: Context) {
                     val appUid = livePkgInfo.applicationInfo?.uid ?: 0
                     val userId = appUid / 100000
 
-                    // 1. Create pre-mutation snapshot and persist before shell execution
                     val snapshotJson = ShellOps.createPreMutationSnapshot(appContext, op.pkg, targetComponents)
+                    withContext(NonCancellable) {
+                        db.policyOpDao().saveSnapshot(op.id, activeGen, snapshotJson)
+                    }
 
-                    // 2. Record appliedAt timestamp and schedule durable 60s crash watchdog
                     val appliedAt = System.currentTimeMillis()
                     scheduleCrashWatchdog(op.id, appliedAt)
 
-                    // 3. Mutate components via shell
                     ShellOps.disableManifestComponents(appContext, service, op.pkg, targetComponents)
-
-                    // 4. Terminate process cleanly via am kill --user $userId
                     ShellOps.killProcessSafely(service, op.pkg, userId)
 
-                    val rows = db.policyOpDao().markApplied(op.id, activeGen, "Disabled ${targetComponents.size} components", snapshotJson)
-                    check(rows == 1)
+                    withContext(NonCancellable) {
+                        rowsUpdated = db.policyOpDao().markApplied(op.id, activeGen, "Disabled ${targetComponents.size} components")
+                        opSucceeded = true
+                    }
                 }
 
                 else -> {
-                    val rows = db.policyOpDao().markFailedPermanent(op.id, activeGen, "UNSUPPORTED_OP", null)
-                    check(rows == 1)
+                    withContext(NonCancellable) {
+                        rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, "UNSUPPORTED_OP")
+                    }
                 }
             }
-            return@withContext true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: SecurityException) {
-            val rows = db.policyOpDao().markFailedPermanent(op.id, activeGen, "SECURITY_EXCEPTION: ${e.message}", null)
-            check(rows == 1)
-            return@withContext false
+            withContext(NonCancellable) {
+                rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, "SECURITY_EXCEPTION: ${e.message}")
+            }
         } catch (e: IllegalArgumentException) {
-            val rows = db.policyOpDao().markFailedPermanent(op.id, activeGen, "ILLEGAL_ARGUMENT: ${e.message}", null)
-            check(rows == 1)
-            return@withContext false
+            withContext(NonCancellable) {
+                rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, "ILLEGAL_ARGUMENT: ${e.message}")
+            }
         } catch (e: DeadObjectException) {
-            handleTransientFailure(db, op.id, activeGen, op.attempts, "DEAD_OBJECT")
-            return@withContext false
+            withContext(NonCancellable) {
+                handleTransientFailure(db, op.id, activeGen, op.attempts, "DEAD_OBJECT")
+            }
         } catch (e: RemoteException) {
-            handleTransientFailure(db, op.id, activeGen, op.attempts, "REMOTE_EXCEPTION: ${e.message}")
-            return@withContext false
+            withContext(NonCancellable) {
+                handleTransientFailure(db, op.id, activeGen, op.attempts, "REMOTE_EXCEPTION: ${e.message}")
+            }
         } catch (t: Throwable) {
-            handleTransientFailure(db, op.id, activeGen, op.attempts, "${t.javaClass.simpleName}: ${t.message}")
-            return@withContext false
+            withContext(NonCancellable) {
+                handleTransientFailure(db, op.id, activeGen, op.attempts, "${t.javaClass.simpleName}: ${t.message}")
+            }
         }
+
+        check(rowsUpdated >= 0)
+        return@withContext opSucceeded
     }
 
     private suspend fun handleTransientFailure(
@@ -266,13 +279,11 @@ class ShizukuManager private constructor(private val appContext: Context) {
     ) {
         val nextAttempt = currentAttempts + 1
         if (nextAttempt >= 5) {
-            val rows = db.policyOpDao().markFailedPermanent(opId, activeGen, errClass, null)
-            check(rows == 1)
+            db.policyOpDao().markFailedPermanent(opId, activeGen, errClass)
         } else {
             val backoffMs = minOf(30_000L shl currentAttempts, 3_600_000L)
             val nextAt = System.currentTimeMillis() + backoffMs
-            val rows = db.policyOpDao().markFailedTransient(opId, activeGen, errClass, nextAt)
-            check(rows == 1)
+            db.policyOpDao().markFailedTransient(opId, activeGen, errClass, nextAt)
         }
     }
 

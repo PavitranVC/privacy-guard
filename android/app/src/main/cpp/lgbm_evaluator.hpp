@@ -8,17 +8,27 @@
 
 namespace privacyguard {
 
+#pragma pack(push, 1)
 struct LightGbmNode {
     int32_t feature;
+    int32_t pad0;
     double threshold;
-    int32_t left;   // if left >= 0: node index; if left < 0: leaf index = (-left - 1)
-    int32_t right;  // if right >= 0: node index; if right < 0: leaf index = (-right - 1)
+    int32_t left;   // if left >= 0: node index; if left < 0: leaf index = ~left
+    int32_t right;  // if right >= 0: node index; if right < 0: leaf index = ~right
     uint8_t default_left;
+    uint8_t pad[3];
 };
 
 struct IsotonicPoint {
     double x;
     double y;
+};
+#pragma pack(pop)
+
+struct EvalResult {
+    double riskScore = 0.0;
+    double maxConfidence = 0.0;
+    double probs[4] = {0.25, 0.25, 0.25, 0.25};
 };
 
 class LightGbmEvaluator {
@@ -27,27 +37,36 @@ public:
     static constexpr int NUM_CLASSES = 4;
 
     bool loadModel(const uint8_t* data, size_t size) {
-        if (!data || size < 24) {
-            is_loaded_ = false;
+        is_loaded_ = false;
+        tree_roots_.clear();
+        nodes_.clear();
+        leaves_.clear();
+        for (int c = 0; c < NUM_CLASSES; ++c) {
+            isotonic_curves_[c].clear();
+        }
+
+        if (!data || size < 28) {
             return false;
         }
 
-        uint32_t magic;
-        std::memcpy(&magic, data, sizeof(magic));
-        if (magic != MAGIC) {
-            // Genesis mode / uninitialized binary
-            is_loaded_ = false;
+        if (std::memcmp(data, "LGBM", 4) != 0) {
             return false;
         }
 
         size_t offset = 4;
         uint32_t version;
         std::memcpy(&version, data + offset, sizeof(version)); offset += 4;
+        uint32_t num_features;
+        std::memcpy(&num_features, data + offset, sizeof(num_features)); offset += 4;
+        uint32_t num_classes;
+        std::memcpy(&num_classes, data + offset, sizeof(num_classes)); offset += 4;
         std::memcpy(&num_trees_, data + offset, sizeof(num_trees_)); offset += 4;
         uint32_t num_nodes;
         std::memcpy(&num_nodes, data + offset, sizeof(num_nodes)); offset += 4;
         uint32_t num_leaves;
         std::memcpy(&num_leaves, data + offset, sizeof(num_leaves)); offset += 4;
+
+        if (num_classes != NUM_CLASSES) return false;
 
         if (offset + num_trees_ * sizeof(int32_t) > size) return false;
         tree_roots_.resize(num_trees_);
@@ -67,7 +86,7 @@ public:
         // Isotonic calibration points per class
         for (int c = 0; c < NUM_CLASSES; ++c) {
             if (offset + sizeof(uint32_t) <= size) {
-                uint32_t num_pts;
+                uint32_t num_pts = 0;
                 std::memcpy(&num_pts, data + offset, sizeof(num_pts));
                 offset += sizeof(uint32_t);
                 if (offset + num_pts * sizeof(IsotonicPoint) <= size) {
@@ -82,7 +101,7 @@ public:
         return true;
     }
 
-    double evaluate(const std::vector<float>& features) const {
+    EvalResult evaluate(const std::vector<float>& features) const {
         if (!is_loaded_ || tree_roots_.empty()) {
             return fallbackHeuristicScore(features);
         }
@@ -92,14 +111,16 @@ public:
         for (size_t t = 0; t < tree_roots_.size(); ++t) {
             int target_class = static_cast<int>(t % NUM_CLASSES);
             int node = tree_roots_[t];
+            size_t steps = 0;
 
-            while (node >= 0 && static_cast<size_t>(node) < nodes_.size()) {
+            while (node >= 0 && static_cast<size_t>(node) < nodes_.size() && steps < nodes_.size()) {
+                steps++;
                 const auto& nd = nodes_[node];
                 double val = 0.0;
                 bool is_nan = true;
                 if (nd.feature >= 0 && static_cast<size_t>(nd.feature) < features.size()) {
                     val = static_cast<double>(features[nd.feature]);
-                    is_nan = std::isnan(val);
+                    is_nan = !std::isfinite(val);
                 }
 
                 int next_idx;
@@ -112,7 +133,7 @@ public:
                 }
 
                 if (next_idx < 0) {
-                    size_t leaf_idx = static_cast<size_t>(-next_idx - 1);
+                    size_t leaf_idx = static_cast<uint32_t>(~next_idx);
                     if (leaf_idx < leaves_.size()) {
                         raw_scores[target_class] += leaves_[leaf_idx];
                     }
@@ -153,9 +174,16 @@ public:
             }
         }
 
+        EvalResult res;
+        for (int c = 0; c < NUM_CLASSES; ++c) {
+            res.probs[c] = calibrated[c];
+        }
+        res.maxConfidence = *std::max_element(calibrated, calibrated + NUM_CLASSES);
+
         // Weighted risk score (Class 0: Benign, Class 1: Low, Class 2: Med, Class 3: High)
         double risk = calibrated[1] * 0.33 + calibrated[2] * 0.66 + calibrated[3] * 1.0;
-        return std::max(0.0, std::min(1.0, risk));
+        res.riskScore = std::max(0.0, std::min(1.0, risk));
+        return res;
     }
 
 private:
@@ -177,21 +205,32 @@ private:
         return p;
     }
 
-    double fallbackHeuristicScore(const std::vector<float>& features) const {
+    EvalResult fallbackHeuristicScore(const std::vector<float>& features) const {
+        EvalResult res;
         double score = 0.05;
-        if (features.size() > 6) {
-            score += static_cast<double>(features[6]) * 0.12;
-        }
-        if (features.size() > 5 && features[5] > 0.5f) {
-            score += 0.25;
-        }
-        if (features.size() > 4 && features[4] > 6.8f) {
+        // Correct feature indices:
+        // [3]: entropy
+        if (features.size() > 3 && features[3] > 6.5f) {
             score += 0.15;
         }
-        if (features.size() > 9 && features[9] > 0.5f) {
+        // [4]: dynamic loading
+        if (features.size() > 4 && features[4] > 0.5f) {
+            score += 0.25;
+        }
+        // [5]: tracker count
+        if (features.size() > 5) {
+            score += static_cast<double>(features[5]) * 0.12;
+        }
+        // [7]: native danger (dlsym/ptrace/mprotect)
+        if (features.size() > 7 && features[7] > 0.5f) {
             score += 0.20;
         }
-        return std::max(0.0, std::min(1.0, score));
+
+        res.riskScore = std::max(0.0, std::min(1.0, score));
+        res.maxConfidence = 0.85; // triggers OSINT if confidence < 0.90
+        res.probs[0] = 1.0 - res.riskScore;
+        res.probs[3] = res.riskScore;
+        return res;
     }
 
     bool is_loaded_ = false;

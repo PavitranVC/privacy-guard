@@ -6,12 +6,16 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.privacyguard.android.data.AppDatabase
 import org.privacyguard.android.data.entity.PolicyOp
 import org.privacyguard.android.shizuku.ShizukuManager
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class CrashWatchdogWorker(
     appContext: Context,
@@ -28,7 +32,7 @@ class CrashWatchdogWorker(
         val op = db.policyOpDao().getById(policyOpId) ?: return Result.success()
 
         // Only inspect if still in APPLIED state
-        if (op.status != PolicyOp.STATUS_APPLIED) {
+        if (op.status != PolicyOp.STATUS_APPLIED && op.status != PolicyOp.STATUS_APPLIED_PARTIAL) {
             return Result.success()
         }
 
@@ -36,43 +40,48 @@ class CrashWatchdogWorker(
         if (!shizuku.isReady()) {
             return Result.retry()
         }
-        val shellService = shizuku.getService() ?: return Result.retry()
 
         // Query privileged exit reasons via dumpsys activity exit-info
-        val dumpsysResult = shellService.exec(arrayOf("dumpsys", "activity", "exit-info", op.pkg))
-        val dumpsysOut = dumpsysResult.stdout
+        val dumpsysResult = withContext(shizuku.ioSingle) {
+            shizuku.exec(arrayOf("dumpsys", "activity", "exit-info", op.pkg))
+        }
 
         var crashDetected = false
-        var crashDescription = ""
+        val dumpsysOut = dumpsysResult.stdout
 
         if (dumpsysResult.exitCode == 0 && dumpsysOut.isNotBlank()) {
-            val lines = dumpsysOut.lines()
-            for (line in lines) {
-                val trimmed = line.trim()
-                if (trimmed.startsWith("timestamp=")) {
-                    val ts = trimmed.substringAfter("timestamp=").substringBefore(" ").toLongOrNull()
-                    if (ts != null && ts >= appliedAt && ts <= appliedAt + 60_000L) {
-                        // Check if reason is crash, native crash, ANR, or init failure
-                        if (dumpsysOut.contains("reason=CRASH", ignoreCase = true) ||
-                            dumpsysOut.contains("reason=USER REQUESTED", ignoreCase = false) ||
-                            dumpsysOut.contains("reason=CRASH_NATIVE", ignoreCase = true) ||
-                            dumpsysOut.contains("reason=ANR", ignoreCase = true) ||
-                            dumpsysOut.contains("reason=INITIALIZATION FAILURE", ignoreCase = true)
-                        ) {
-                            crashDetected = true
-                            crashDescription = "Crash observed post-apply: $trimmed"
-                            break
-                        }
+            // Split into individual ApplicationExitInfo blocks
+            val blocks = dumpsysOut.split("ApplicationExitInfo #")
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+            val reasonRegex = Regex("reason=(4|5|6|7)\\b") // 4=CRASH, 5=CRASH_NATIVE, 6=ANR, 7=INITIALIZATION_FAILURE
+
+            for (block in blocks) {
+                if (!reasonRegex.containsMatchIn(block)) continue
+
+                val tsLine = block.lines().firstOrNull { it.trim().startsWith("timestamp=") }
+                if (tsLine != null) {
+                    val rawTs = tsLine.substringAfter("timestamp=").trim().substringBefore(" ")
+                    val timestamp = try {
+                        sdf.parse(rawTs)?.time
+                    } catch (_: Throwable) {
+                        rawTs.toLongOrNull()
+                    }
+
+                    if (timestamp != null && timestamp in appliedAt..(appliedAt + 60_000L)) {
+                        crashDetected = true
+                        break
                     }
                 }
             }
         }
 
         if (crashDetected) {
-            Log.w(TAG, "Process crash detected within 60s window. Initiating rollback.")
-            val restored = restoreSnapshotViaShell(shellService, op.pkg, op.snapshot)
+            Log.w(TAG, "Process crash detected within 60s window for ${op.pkg}. Initiating rollback.")
+            val restored = withContext(shizuku.ioSingle) {
+                restoreSnapshotViaShell(shizuku, op.pkg, op.snapshot)
+            }
             if (restored) {
-                db.policyOpDao().markRolledBackUnsafe(op.id, op.gen, crashDescription)
+                db.policyOpDao().markRolledBackUnsafe(op.id, op.gen)
             } else {
                 return Result.retry()
             }
@@ -81,8 +90,8 @@ class CrashWatchdogWorker(
         return Result.success()
     }
 
-    private fun restoreSnapshotViaShell(
-        shellService: org.privacyguard.android.service.IShellService,
+    private suspend fun restoreSnapshotViaShell(
+        shizuku: ShizukuManager,
         pkg: String,
         snapshotJson: String?
     ): Boolean {
@@ -93,23 +102,39 @@ class CrashWatchdogWorker(
             val userId = appInfo.uid / 100000
 
             val jsonMap = Json.parseToJsonElement(snapshotJson).jsonObject
-            for ((componentNameStr, _) in jsonMap) {
-                val componentName = ComponentName(pkg, componentNameStr)
-                val res = shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
-                if (res.exitCode != 0) {
-                    shellService.exec(arrayOf("pm", "enable", "--user", userId.toString(), componentName.flattenToString()))
+            var allSucceeded = true
+
+            for ((compNameStr, stateElem) in jsonMap) {
+                val state = stateElem.jsonPrimitive.intOrNull ?: 0
+                val componentName = ComponentName(pkg, compNameStr)
+                val flatName = componentName.flattenToString()
+
+                val cmd = when (state) {
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED ->
+                        arrayOf("pm", "enable", "--user", userId.toString(), flatName)
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED ->
+                        arrayOf("pm", "disable", "--user", userId.toString(), flatName)
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ->
+                        arrayOf("pm", "disable-user", "--user", userId.toString(), flatName)
+                    else ->
+                        arrayOf("pm", "default-state", "--user", userId.toString(), flatName)
+                }
+
+                val res = shizuku.exec(cmd)
+                val observed = pm.getComponentEnabledSetting(componentName)
+                if (res.exitCode != 0 || (state != 0 && observed != state)) {
+                    allSucceeded = false
                 }
             }
-            true
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed restoring snapshot via shell", e)
+            allSucceeded
+        } catch (_: Throwable) {
             false
         }
     }
 
     companion object {
         private const val TAG = "CrashWatchdogWorker"
-        const val KEY_POLICY_OP_ID = "key_policy_op_id"
-        const val KEY_APPLIED_AT = "key_applied_at"
+        const val KEY_POLICY_OP_ID = "policy_op_id"
+        const val KEY_APPLIED_AT = "applied_at"
     }
 }

@@ -33,6 +33,7 @@ data class PolicyOp(
         const val STATUS_PENDING = "PENDING"
         const val STATUS_APPLYING = "APPLYING"
         const val STATUS_APPLIED = "APPLIED"
+        const val STATUS_APPLIED_PARTIAL = "APPLIED_PARTIAL"
         const val STATUS_DRIFT = "DRIFT"
         const val STATUS_SUPERSEDED = "SUPERSEDED"
         const val STATUS_FAILED_TRANSIENT = "FAILED_TRANSIENT"

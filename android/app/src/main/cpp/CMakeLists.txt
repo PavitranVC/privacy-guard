@@ -5,8 +5,8 @@ project("privacyguard_scan")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enforce 16 KB ELF segment alignment for Android 15+ 16 KB page size support
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384")
+# Enforce 16 KB ELF segment alignment for Android 15+ 16 KB page size support and forbid undefined symbols
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--no-undefined")
 
 add_library(
     privacyguard_scan

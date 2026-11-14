@@ -3,6 +3,7 @@ package org.privacyguard.android.scan.tier1a
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.TransactionTooLargeException
 import java.security.MessageDigest
 
 data class Tier1AResult(
@@ -21,6 +22,7 @@ object Tier1AScanner {
 
     private val DANGEROUS_PERMISSIONS = setOf(
         "android.permission.BIND_ACCESSIBILITY_SERVICE",
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
         "android.permission.SEND_SMS",
@@ -35,34 +37,36 @@ object Tier1AScanner {
 
     private const val PERM_BOOT_COMPLETED = "android.permission.RECEIVE_BOOT_COMPLETED"
 
-    /**
-     * Executes an instant manifest scan (under 5 ms) over the target installed package.
-     * Intentionally omits GET_ACTIVITIES to avoid bloated IPC Binder payloads.
-     */
     fun scanInstalledApp(
         context: Context,
         packageName: String,
         trackerSignatures: List<String>
     ): Tier1AResult {
         val pm = context.packageManager
-        val flags = PackageManager.GET_SERVICES or
+        val baseFlags = (PackageManager.GET_SERVICES or
                 PackageManager.GET_RECEIVERS or
                 PackageManager.GET_PROVIDERS or
                 PackageManager.GET_PERMISSIONS or
-                PackageManager.GET_SIGNING_CERTIFICATES
+                PackageManager.GET_SIGNING_CERTIFICATES or
+                PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
 
-        val pkgInfo = pm.getPackageInfo(packageName, flags)
+        val pkgInfo: PackageInfo = try {
+            pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(baseFlags))
+        } catch (e: TransactionTooLargeException) {
+            // Fallback: query subsets separately to avoid IPC overflow
+            queryPackageInfoSubsets(pm, packageName)
+        }
+
         val appInfo = pkgInfo.applicationInfo ?: throw IllegalStateException("Missing ApplicationInfo for $packageName")
-
         val baseApkPath = appInfo.sourceDir ?: ""
         val splitApkPaths = appInfo.splitSourceDirs?.toList() ?: emptyList()
 
-        // 1. Compute Signing Certificate SHA-256
+        // 1. Compute Signing Certificate SHA-256 (all signers sorted)
         val certSha256 = extractSigningCertSha256(pkgInfo)
 
         // 2. Identify Dangerous Permissions & Boot Completed
         val requestedPerms = pkgInfo.requestedPermissions ?: emptyArray()
-        val foundDangerousPerms = mutableListOf<String>()
+        val foundDangerousPerms = mutableSetOf<String>()
         var hasBoot = false
 
         for (perm in requestedPerms) {
@@ -74,14 +78,21 @@ object Tier1AScanner {
             }
         }
 
-        // 3. Match Component Class Names against Tracker Signatures
-        // Component class names in manifest are declared names immune to R8 renaming
+        // 3. Inspect Service permissions for accessibility & notification listener guards
+        pkgInfo.services?.forEach { svc ->
+            val p = svc.permission
+            if (p != null && p in DANGEROUS_PERMISSIONS) {
+                foundDangerousPerms.add(p)
+            }
+        }
+
+        // 4. Match Component Class Names against Tracker Signatures
         val detectedTrackers = mutableSetOf<String>()
 
         fun checkComponent(name: String?) {
             if (name == null) return
             for (sig in trackerSignatures) {
-                if (name.startsWith(sig) || name.contains(sig)) {
+                if (name == sig || name.startsWith("$sig.")) {
                     detectedTrackers.add(sig)
                 }
             }
@@ -91,7 +102,7 @@ object Tier1AScanner {
         pkgInfo.receivers?.forEach { checkComponent(it.name) }
         pkgInfo.providers?.forEach { checkComponent(it.name) }
 
-        // 4. Calculate Instant Heuristic Manifest Risk Score
+        // 5. Calculate Instant Heuristic Manifest Risk Score
         var risk = 0.05
         risk += detectedTrackers.size * 0.15
         risk += foundDangerousPerms.size * 0.10
@@ -107,11 +118,32 @@ object Tier1AScanner {
             signingCertSha256 = certSha256,
             baseApkPath = baseApkPath,
             splitApkPaths = splitApkPaths,
-            dangerousPermissions = foundDangerousPerms,
+            dangerousPermissions = foundDangerousPerms.toList(),
             hasBootCompleted = hasBoot,
             detectedTrackers = detectedTrackers.toList(),
             manifestRiskScore = finalScore
         )
+    }
+
+    private fun queryPackageInfoSubsets(pm: PackageManager, packageName: String): PackageInfo {
+        val base = pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_DISABLED_COMPONENTS.toLong()))
+        try {
+            val perms = pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()))
+            base.requestedPermissions = perms.requestedPermissions
+        } catch (_: Throwable) {}
+        try {
+            val svcs = pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_SERVICES.toLong()))
+            base.services = svcs.services
+        } catch (_: Throwable) {}
+        try {
+            val rcvs = pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_RECEIVERS.toLong()))
+            base.receivers = rcvs.receivers
+        } catch (_: Throwable) {}
+        try {
+            val certs = pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()))
+            base.signingInfo = certs.signingInfo
+        } catch (_: Throwable) {}
+        return base
     }
 
     private fun extractSigningCertSha256(pkgInfo: PackageInfo): String {
@@ -124,10 +156,12 @@ object Tier1AScanner {
 
         if (signers.isNullOrEmpty()) return ""
 
-        val certBytes = signers[0].toByteArray()
-        val md = MessageDigest.getInstance("SHA-256")
-        val digest = md.digest(certBytes)
+        val hexList = signers.map { cert ->
+            val md = MessageDigest.getInstance("SHA-256")
+            val digest = md.digest(cert.toByteArray())
+            digest.joinToString("") { "%02x".format(it) }
+        }.sorted()
 
-        return digest.joinToString("") { "%02x".format(it) }
+        return hexList.joinToString(",")
     }
 }

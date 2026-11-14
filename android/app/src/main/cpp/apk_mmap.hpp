@@ -12,7 +12,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <functional>
 
 namespace privacyguard {
 
@@ -29,33 +28,47 @@ struct ZipEntry {
     uint32_t localHeaderOffset;
 };
 
+struct EntryView {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+};
+
 class ApkArchive {
 public:
-    explicit ApkArchive(const std::string& path) : path_(path), fd_(-1), mapped_(MAP_FAILED), fileSize_(0) {}
+    explicit ApkArchive(const std::string& path)
+        : path_(path), fd_(-1), ownsFd_(true), mapped_(MAP_FAILED), fileSize_(0) {}
+
+    explicit ApkArchive(int fd)
+        : path_(""), fd_(fd), ownsFd_(false), mapped_(MAP_FAILED), fileSize_(0) {}
 
     ~ApkArchive() {
         closeArchive();
     }
 
     bool openArchive() {
-        fd_ = open(path_.c_str(), O_RDONLY | O_CLOEXEC);
-        if (fd_ < 0) return false;
+        if (fd_ < 0) {
+            fd_ = open(path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd_ < 0) return false;
+            ownsFd_ = true;
+        }
 
         struct stat st{};
-        if (fstat(fd_, &st) != 0 || st.st_size <= 22) {
-            close(fd_);
-            fd_ = -1;
+        if (fstat(fd_, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 22) {
+            if (ownsFd_) {
+                close(fd_);
+                fd_ = -1;
+            }
             return false;
         }
 
         fileSize_ = static_cast<size_t>(st.st_size);
-        long page_size = sysconf(_SC_PAGESIZE);
-        if (page_size <= 0) page_size = 16384;
 
         mapped_ = mmap(nullptr, fileSize_, PROT_READ, MAP_PRIVATE, fd_, 0);
         if (mapped_ == MAP_FAILED) {
-            close(fd_);
-            fd_ = -1;
+            if (ownsFd_) {
+                close(fd_);
+                fd_ = -1;
+            }
             return false;
         }
 
@@ -69,7 +82,10 @@ public:
             mapped_ = MAP_FAILED;
         }
         if (fd_ >= 0) {
-            close(fd_);
+            // Android 14+ fdsan safety: only close if this archive owns the file descriptor
+            if (ownsFd_) {
+                close(fd_);
+            }
             fd_ = -1;
         }
         entries_.clear();
@@ -80,12 +96,65 @@ public:
         return entries_;
     }
 
+    // Zero-copy access for STORED entries directly pointing into mmap memory
+    bool getEntryView(const ZipEntry& entry, EntryView& view) const {
+        if (mapped_ == MAP_FAILED || entry.method != 0) return false;
+        if (entry.compressedSize != entry.uncompressedSize) return false;
+        if (entry.uncompressedSize > MAX_UNCOMPRESSED_ENTRY_SIZE) return false;
+
+        size_t dataOffset = 0;
+        if (!resolveDataOffset(entry, dataOffset)) return false;
+
+        view.data = static_cast<const uint8_t*>(mapped_) + dataOffset;
+        view.size = entry.uncompressedSize;
+        return true;
+    }
+
     // Read or decompress entry payload into buffer. Enforces 64MB cap and overflow-safe arithmetic.
     bool extractEntry(const ZipEntry& entry, std::vector<uint8_t>& out) const {
         if (mapped_ == MAP_FAILED) return false;
         if (entry.uncompressedSize > MAX_UNCOMPRESSED_ENTRY_SIZE) return false;
 
-        // Subtraction-based bounds check for local header
+        size_t dataOffset = 0;
+        if (!resolveDataOffset(entry, dataOffset)) return false;
+
+        const uint8_t* raw = static_cast<const uint8_t*>(mapped_);
+        const uint8_t* compressedData = raw + dataOffset;
+
+        if (entry.method == 0) {
+            // Stored
+            if (entry.compressedSize != entry.uncompressedSize) return false;
+            out.resize(entry.uncompressedSize);
+            if (entry.uncompressedSize > 0) {
+                std::memcpy(out.data(), compressedData, entry.uncompressedSize);
+            }
+            return true;
+        } else if (entry.method == 8) {
+            // Deflated - raw inflateInit2 with negative MAX_WBITS
+            out.resize(entry.uncompressedSize);
+
+            z_stream strm{};
+            strm.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(compressedData));
+            strm.avail_in = entry.compressedSize;
+            strm.next_out = reinterpret_cast<Bytef*>(out.data());
+            strm.avail_out = entry.uncompressedSize;
+
+            if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) {
+                return false;
+            }
+
+            int ret = inflate(&strm, Z_FINISH);
+            bool ok = (ret == Z_STREAM_END && strm.total_out == entry.uncompressedSize);
+            inflateEnd(&strm);
+
+            return ok;
+        }
+
+        return false;
+    }
+
+private:
+    bool resolveDataOffset(const ZipEntry& entry, size_t& outOffset) const {
         if (entry.localHeaderOffset > fileSize_ || 30 > fileSize_ - entry.localHeaderOffset) {
             return false;
         }
@@ -110,39 +179,10 @@ public:
             return false;
         }
 
-        const uint8_t* compressedData = raw + dataOffset;
-
-        if (entry.method == 0) {
-            // Stored
-            out.resize(entry.uncompressedSize);
-            if (entry.uncompressedSize > 0) {
-                std::memcpy(out.data(), compressedData, entry.uncompressedSize);
-            }
-            return true;
-        } else if (entry.method == 8) {
-            // Deflated - raw inflateInit2 with negative MAX_WBITS
-            out.resize(entry.uncompressedSize);
-
-            z_stream strm{};
-            strm.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(compressedData));
-            strm.avail_in = entry.compressedSize;
-            strm.next_out = reinterpret_cast<Bytef*>(out.data());
-            strm.avail_out = entry.uncompressedSize;
-
-            if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) {
-                return false;
-            }
-
-            int ret = inflate(&strm, Z_FINISH);
-            inflateEnd(&strm);
-
-            return (ret == Z_STREAM_END || ret == Z_OK);
-        }
-
-        return false;
+        outOffset = dataOffset;
+        return true;
     }
 
-private:
     bool parseCentralDirectory() {
         if (mapped_ == MAP_FAILED || fileSize_ < 22) return false;
 
@@ -158,19 +198,20 @@ private:
             uint32_t sig;
             std::memcpy(&sig, raw + i, sizeof(sig));
             if (sig == ZIP_EOCD_SIGNATURE) {
-                eocdOffset = i;
-                foundEocd = true;
-                break;
+                // Validate comment length to avoid false positive magic match
+                uint16_t cl;
+                std::memcpy(&cl, raw + i + 20, sizeof(cl));
+                if (i + 22 + static_cast<size_t>(cl) == fileSize_) {
+                    eocdOffset = i;
+                    foundEocd = true;
+                    break;
+                }
             }
             if (i == 0) break;
         }
 
         if (!foundEocd) return false;
 
-        // EOCD structure:
-        // offset 10: total central directory records (uint16_t)
-        // offset 12: size of central directory (uint32_t)
-        // offset 16: offset of start of central directory (uint32_t)
         uint16_t totalEntries;
         uint32_t cdSize;
         uint32_t cdOffset;
@@ -178,13 +219,13 @@ private:
         std::memcpy(&cdSize, raw + eocdOffset + 12, sizeof(cdSize));
         std::memcpy(&cdOffset, raw + eocdOffset + 16, sizeof(cdOffset));
 
-        // Subtraction-based bounds validation
         if (cdOffset > fileSize_ || cdSize > fileSize_ - cdOffset) {
             return false;
         }
 
         size_t currOffset = cdOffset;
         for (uint16_t i = 0; i < totalEntries; ++i) {
+            if (currOffset - cdOffset >= cdSize) break;
             if (currOffset > fileSize_ || 46 > fileSize_ - currOffset) {
                 break;
             }
@@ -235,6 +276,7 @@ private:
 
     std::string path_;
     int fd_;
+    bool ownsFd_;
     void* mapped_;
     size_t fileSize_;
     std::vector<ZipEntry> entries_;

@@ -8,18 +8,19 @@ import org.privacyguard.android.data.entity.Capability
 
 @Dao
 interface CapabilityDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertOrUpdate(capability: Capability)
+
+    @Query("SELECT * FROM capability WHERE op = :op AND buildFingerprint = :fingerprint LIMIT 1")
+    suspend fun getCapability(op: String, fingerprint: String): Capability?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertOrUpdateAll(capabilities: List<Capability>)
+    suspend fun upsert(capability: Capability)
 
-    @Query("SELECT * FROM capability WHERE op = :op LIMIT 1")
-    suspend fun getCapability(op: String): Capability?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(capabilities: List<Capability>)
 
     @Query("SELECT * FROM capability")
-    suspend fun getAll(): List<Capability>
+    suspend fun getAllCapabilities(): List<Capability>
 
-    @Query("SELECT supported FROM capability WHERE op = :op LIMIT 1")
-    suspend fun isSupported(op: String): Boolean?
+    @Query("SELECT (supported == 1) FROM capability WHERE op = :op AND buildFingerprint = :fingerprint LIMIT 1")
+    suspend fun isSupported(op: String, fingerprint: String): Boolean?
 }

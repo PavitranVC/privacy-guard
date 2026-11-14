@@ -7,5 +7,6 @@ import androidx.room.PrimaryKey
 data class ReconcileRequest(
     @PrimaryKey
     val pkg: String,
-    val requestedAt: Long
+    val requestedAt: Long,
+    val seq: Long = 0L
 )

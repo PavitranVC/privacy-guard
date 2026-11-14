@@ -22,7 +22,8 @@ class PackageChangeReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = AppDatabase.getInstance(context)
-                db.reconcileRequestDao().upsertRequest(pkg, System.currentTimeMillis())
+                val now = System.currentTimeMillis()
+                db.reconcileRequestDao().upsertRequestWithSeq(pkg, now, now)
                 ReconciliationCoordinator.scheduleDrainWork(context)
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed recording reconcile request", t)

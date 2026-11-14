@@ -1,8 +1,8 @@
 package org.privacyguard.android.scan;
 
+import android.os.ParcelFileDescriptor;
 import org.privacyguard.android.scan.NativeScanResult;
 
 interface IScanService {
-    boolean initEngine(in byte[] trackerAcBytes, in byte[] modelBytes);
-    NativeScanResult scanApk(in String apkPath);
+    NativeScanResult scanApkFd(in ParcelFileDescriptor pfd);
 }

@@ -1,9 +1,39 @@
+import java.security.SecureRandom
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.refine)
+}
+
+val keystorePropsFile = file("keystore/keystore.properties")
+val releaseKeystoreFile = file("keystore/release.jks")
+
+val releasePassword: String = run {
+    val envPass = System.getenv("KEYSTORE_PASSWORD")
+    if (!envPass.isNullOrBlank()) {
+        envPass
+    } else if (keystorePropsFile.exists()) {
+        val props = Properties()
+        keystorePropsFile.inputStream().use { props.load(it) }
+        props.getProperty("password") ?: "privacyguard123"
+    } else {
+        val pass = if (releaseKeystoreFile.exists()) {
+            "privacyguard123"
+        } else {
+            val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+            val random = SecureRandom()
+            (1..32).map { chars[random.nextInt(chars.length)] }.joinToString("")
+        }
+        keystorePropsFile.parentFile?.mkdirs()
+        val props = Properties()
+        props.setProperty("password", pass)
+        keystorePropsFile.outputStream().use { props.store(it, "Local release keystore password") }
+        pass
+    }
 }
 
 android {
@@ -26,10 +56,19 @@ android {
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++17", "-O3", "-fno-exceptions", "-fno-rtti", "-fvisibility=hidden")
+                cppFlags += listOf(
+                    "-std=c++17",
+                    "-O3",
+                    "-fno-exceptions",
+                    "-fno-rtti",
+                    "-fvisibility=hidden",
+                    "-D_FORTIFY_SOURCE=2",
+                    "-Wformat",
+                    "-Werror=format-security"
+                )
                 arguments += listOf(
                     "-DANDROID_STL=c++_static",
-                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--no-undefined"
                 )
             }
         }
@@ -37,12 +76,11 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystoreFile = file("keystore/release.jks")
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
-                storePassword = "privacyguard123"
+            if (releaseKeystoreFile.exists()) {
+                storeFile = releaseKeystoreFile
+                storePassword = releasePassword
                 keyAlias = "privacyguard"
-                keyPassword = "privacyguard123"
+                keyPassword = releasePassword
             } else {
                 initWith(getByName("debug"))
             }
@@ -121,4 +159,7 @@ dependencies {
     implementation(libs.refine.runtime)
     compileOnly(libs.refine.annotation)
     implementation(libs.hiddenapibypass)
+
+    // Unit Testing
+    testImplementation(libs.junit)
 }
