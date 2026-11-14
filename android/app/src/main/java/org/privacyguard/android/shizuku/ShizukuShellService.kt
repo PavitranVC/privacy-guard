@@ -121,7 +121,7 @@ class ShizukuShellService : IShellService.Stub() {
 
         private val ALLOWED_KEYWORDS = setOf(
             "restricted", "active", "rare", "working_set", "frequent",
-            "ignore", "allow", "default", "foreground",
+            "ignore", "allow", "default", "foreground", "deny",
             "true", "false", "exit-info",
             "set-chain3-enabled", "set-package-networking-enabled",
             "oem_deny_3", "add", "remove", "set", "get", "RUN_ANY_IN_BACKGROUND", "help"

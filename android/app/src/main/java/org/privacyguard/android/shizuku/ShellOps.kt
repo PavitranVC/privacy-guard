@@ -165,16 +165,23 @@ object ShellOps {
         return null
     }
 
-    fun parseAppOpsRunAnyOutput(stdout: String?): String {
-        if (stdout.isNullOrBlank()) return "allow"
+    val VALID_APPOPS_MODES = setOf("allow", "ignore", "deny", "default", "foreground")
+
+    fun isValidAppOpsMode(mode: String?): Boolean {
+        return mode != null && mode.lowercase() in VALID_APPOPS_MODES
+    }
+
+    fun parseAppOpsRunAnyOutput(stdout: String?): String? {
+        if (stdout.isNullOrBlank()) return null
         val match = Regex("RUN_ANY_IN_BACKGROUND:\\s*([a-zA-Z]+)", RegexOption.IGNORE_CASE).find(stdout)
         if (match != null) {
-            return match.groupValues[1].lowercase()
+            val mode = match.groupValues[1].lowercase()
+            return if (mode in VALID_APPOPS_MODES) mode else null
         }
         if (stdout.contains("No operations", ignoreCase = true)) {
             return "allow"
         }
-        return "allow"
+        return null
     }
 
     fun formatIsolationResult(

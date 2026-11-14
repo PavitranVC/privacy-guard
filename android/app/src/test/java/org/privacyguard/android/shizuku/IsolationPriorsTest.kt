@@ -68,6 +68,30 @@ class IsolationPriorsTest {
         // (e) deny
         val denyOut = "Uid mode: RUN_ANY_IN_BACKGROUND: deny"
         assertEquals("deny", ShellOps.parseAppOpsRunAnyOutput(denyOut))
+
+        // (f) foreground (captured from device)
+        val fgOut = "Uid mode: RUN_ANY_IN_BACKGROUND: foreground"
+        assertEquals("foreground", ShellOps.parseAppOpsRunAnyOutput(fgOut))
+
+        // Unknown / garbage / empty modes must return null
+        assertNull(ShellOps.parseAppOpsRunAnyOutput("Uid mode: RUN_ANY_IN_BACKGROUND: garbage"))
+        assertNull(ShellOps.parseAppOpsRunAnyOutput("Uid mode: RUN_ANY_IN_BACKGROUND: invalid_mode"))
+        assertNull(ShellOps.parseAppOpsRunAnyOutput(null))
+        assertNull(ShellOps.parseAppOpsRunAnyOutput(""))
+    }
+
+    @Test
+    fun `test isValidAppOpsMode validates allowed modes only`() {
+        assertTrue(ShellOps.isValidAppOpsMode("allow"))
+        assertTrue(ShellOps.isValidAppOpsMode("ignore"))
+        assertTrue(ShellOps.isValidAppOpsMode("deny"))
+        assertTrue(ShellOps.isValidAppOpsMode("default"))
+        assertTrue(ShellOps.isValidAppOpsMode("foreground"))
+
+        assertFalse(ShellOps.isValidAppOpsMode("garbage"))
+        assertFalse(ShellOps.isValidAppOpsMode("active"))
+        assertFalse(ShellOps.isValidAppOpsMode(null))
+        assertFalse(ShellOps.isValidAppOpsMode(""))
     }
 
     @Test

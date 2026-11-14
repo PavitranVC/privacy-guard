@@ -183,4 +183,21 @@ class ShizukuShellServiceTest {
             arrayOf("am", "get-standby-bucket", "--user", "0", "com.example.app", "extra")
         ))
     }
+
+    @Test
+    fun `test cmd appops set with deny mode accepted`() {
+        val error = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "--uid", "10355", "RUN_ANY_IN_BACKGROUND", "deny")
+        )
+        assertNull(error)
+    }
+
+    @Test
+    fun `test cmd appops set with garbage mode rejected`() {
+        val error = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "--uid", "10355", "RUN_ANY_IN_BACKGROUND", "garbage")
+        )
+        assertNotNull(error)
+        assertTrue(error!!.contains("garbage"))
+    }
 }
