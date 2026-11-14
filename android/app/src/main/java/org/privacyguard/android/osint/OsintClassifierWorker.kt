@@ -24,7 +24,7 @@ class OsintClassifierWorker(
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun doWork(): Result {
-        if (runAttemptCount >= 5) return Result.failure()
+        if (runAttemptCount >= 3) return Result.failure()
 
         val db = AppDatabase.getInstance(applicationContext)
         val pendingQueue = db.appScanResultDao().getPendingOsintQueue()
@@ -65,23 +65,29 @@ class OsintClassifierWorker(
                 }
 
                 // Query local LAN Ollama instance
-                val verdict = ollamaClient.queryClassification(
+                when (val result = ollamaClient.classify(
                     packageName = item.pkg,
                     certSha256 = item.certSha256,
                     dangerousPermissions = dangerousPerms,
                     detectedTrackers = trackers
-                )
-
-                if (verdict != null) {
-                    val finalVerdict = "${verdict.verdict}:${(verdict.confidence * 100).toInt()}"
-                    db.appScanResultDao().updateOsintVerdict(item.pkg, finalVerdict)
-                } else {
-                    // Ollama offline / LAN endpoint not reachable; retry via WorkManager
-                    Log.w(TAG, "Ollama local LAN endpoint unreachable for ${item.pkg}")
-                    return if (runAttemptCount < 4) {
-                        Result.retry()
-                    } else {
-                        Result.failure()
+                )) {
+                    is ClassificationResult.Success -> {
+                        val verdict = result.verdict
+                        val finalVerdict = "${verdict.verdict}:${(verdict.confidence * 100).toInt()}"
+                        db.appScanResultDao().updateOsintVerdict(item.pkg, finalVerdict)
+                    }
+                    is ClassificationResult.Invalid -> {
+                        Log.w(TAG, "Ollama returned invalid/poison response for ${item.pkg}; marking OSINT_ERROR")
+                        db.appScanResultDao().updateOsintVerdict(item.pkg, "OSINT_ERROR")
+                        continue
+                    }
+                    is ClassificationResult.Unreachable -> {
+                        Log.w(TAG, "Ollama local LAN endpoint unreachable for ${item.pkg}")
+                        return if (runAttemptCount < 3) {
+                            Result.retry()
+                        } else {
+                            Result.failure()
+                        }
                     }
                 }
             } catch (e: CancellationException) {

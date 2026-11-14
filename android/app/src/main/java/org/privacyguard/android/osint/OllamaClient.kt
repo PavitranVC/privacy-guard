@@ -25,17 +25,24 @@ data class OsintVerdict(
     val reasoning: String
 )
 
+sealed class ClassificationResult {
+    data class Success(val verdict: OsintVerdict) : ClassificationResult()
+    object Unreachable : ClassificationResult()   // SocketTimeout, ConnectException, 5xx, or offline
+    object Invalid : ClassificationResult()       // 200 returned but JSON unparseable / missing fields / invalid verdict
+}
+
 class OllamaClient(
     private val baseUrl: String = "http://127.0.0.1:11434"
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun queryClassification(
+    fun classify(
         packageName: String,
         certSha256: String,
         dangerousPermissions: List<String>,
         detectedTrackers: List<String>
-    ): OsintVerdict? {
+    ): ClassificationResult {
+        var conn: HttpURLConnection? = null
         return try {
             val prompt = """
                 You are an Android privacy & security analysis engine. Evaluate the following app metadata:
@@ -53,7 +60,7 @@ class OllamaClient(
             val reqBody = json.encodeToString(OllamaGenerateRequest.serializer(), req)
 
             val url = URL("$baseUrl/api/generate")
-            val conn = url.openConnection() as HttpURLConnection
+            conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("User-Agent", "PrivacyGuard/1.0")
@@ -65,15 +72,50 @@ class OllamaClient(
                 os.write(reqBody.toByteArray(Charsets.UTF_8))
             }
 
-            if (conn.responseCode == 200) {
+            val responseCode = conn.responseCode
+            if (responseCode == 200) {
                 val respBody = conn.inputStream.bufferedReader().use { it.readText() }
-                val rawResp = json.decodeFromString(OllamaGenerateResponse.serializer(), respBody)
-                json.decodeFromString(OsintVerdict.serializer(), rawResp.response)
+                try {
+                    val rawResp = json.decodeFromString(OllamaGenerateResponse.serializer(), respBody)
+                    val verdict = json.decodeFromString(OsintVerdict.serializer(), rawResp.response)
+                    val v = verdict.verdict.uppercase()
+                    if (v in setOf("MALICIOUS", "SUSPICIOUS", "CLEAN") && verdict.confidence in 0.0..1.0) {
+                        ClassificationResult.Success(verdict)
+                    } else {
+                        ClassificationResult.Invalid
+                    }
+                } catch (_: Throwable) {
+                    ClassificationResult.Invalid
+                }
+            } else if (responseCode >= 500) {
+                ClassificationResult.Unreachable
             } else {
-                null
+                ClassificationResult.Invalid
             }
+        } catch (_: java.net.SocketTimeoutException) {
+            ClassificationResult.Unreachable
+        } catch (_: java.net.ConnectException) {
+            ClassificationResult.Unreachable
+        } catch (_: java.net.UnknownHostException) {
+            ClassificationResult.Unreachable
+        } catch (_: java.io.IOException) {
+            ClassificationResult.Unreachable
         } catch (_: Throwable) {
-            null
+            ClassificationResult.Unreachable
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    fun queryClassification(
+        packageName: String,
+        certSha256: String,
+        dangerousPermissions: List<String>,
+        detectedTrackers: List<String>
+    ): OsintVerdict? {
+        return when (val result = classify(packageName, certSha256, dangerousPermissions, detectedTrackers)) {
+            is ClassificationResult.Success -> result.verdict
+            else -> null
         }
     }
 }
