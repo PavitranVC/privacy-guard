@@ -35,11 +35,13 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (uiState.selectedApp != null) {
+                    val isComponentStateSupported = uiState.capabilities.find { it.op == "pm_component_state_shell" }?.supported != false
                     AppDetailScreen(
                         app = uiState.selectedApp!!,
                         ops = uiState.selectedAppOps,
                         hasUnsafeRollback = uiState.hasUnsafeRollback,
                         isProtected = uiState.isSelectedAppProtected,
+                        isComponentDisableSupported = isComponentStateSupported,
                         onBack = { viewModel.selectPackage(null) },
                         onDisableTrackers = { pkg -> viewModel.disableTrackerComponents(pkg) },
                         onRestrictBackground = { pkg -> viewModel.restrictBackgroundNetworking(pkg) },

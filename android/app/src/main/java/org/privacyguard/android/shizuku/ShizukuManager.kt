@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.RemoteException
@@ -240,6 +241,15 @@ class ShizukuManager private constructor(private val appContext: Context) {
                 }
 
                 "disable_components" -> {
+                    val fingerprint = Build.FINGERPRINT ?: "unknown"
+                    if (!ShellOps.checkComponentStateCapability(db.capabilityDao(), fingerprint)) {
+                        withContext(NonCancellable) {
+                            rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, ShellOps.ERR_SHELL_COMPONENT_STATE_DENIED)
+                            opSucceeded = (rowsUpdated == 1)
+                        }
+                        return@withContext false
+                    }
+
                     val targetComponents = op.target.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                     val appUid = livePkgInfo.applicationInfo?.uid ?: 0
                     val userId = appUid / 100000
@@ -282,7 +292,13 @@ class ShizukuManager private constructor(private val appContext: Context) {
             throw e
         } catch (e: SecurityException) {
             withContext(NonCancellable) {
-                rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, "SECURITY_EXCEPTION: ${e.message}")
+                if (ShellOps.isComponentStateDeniedException(e)) {
+                    val fingerprint = Build.FINGERPRINT ?: "unknown"
+                    ShellOps.recordComponentStateDenial(db.capabilityDao(), fingerprint)
+                    rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, ShellOps.ERR_SHELL_COMPONENT_STATE_DENIED)
+                } else {
+                    rowsUpdated = db.policyOpDao().markFailedPermanent(op.id, activeGen, "SECURITY_EXCEPTION: ${e.message}")
+                }
             }
         } catch (e: IllegalArgumentException) {
             withContext(NonCancellable) {

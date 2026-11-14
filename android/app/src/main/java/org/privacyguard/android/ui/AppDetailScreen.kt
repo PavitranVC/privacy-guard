@@ -69,6 +69,7 @@ fun AppDetailScreen(
     onRestrictBackground: (String) -> Unit,
     onRollback: (String) -> Unit,
     onUnlockAndRetry: (String, String) -> Unit = { _, _ -> },
+    isComponentDisableSupported: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var showUnlockDialog by remember { mutableStateOf(false) }
@@ -311,11 +312,20 @@ fun AppDetailScreen(
                     // Disable Tracker Components Button
                     Button(
                         onClick = { onDisableTrackers(app.pkg) },
-                        enabled = !isProtected && !hasUnsafeRollback && trackers.isNotEmpty(),
+                        enabled = !isProtected && !hasUnsafeRollback && trackers.isNotEmpty() && isComponentDisableSupported,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828))
                     ) {
                         Text("Disable ${trackers.size} Tracker Components")
+                    }
+
+                    if (!isComponentDisableSupported) {
+                        Text(
+                            text = "Not supported on this device without root",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFC62828),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

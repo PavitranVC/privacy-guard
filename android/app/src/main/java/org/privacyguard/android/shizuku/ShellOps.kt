@@ -25,6 +25,9 @@ object ShellOps {
     const val DESIRED_DISABLED = "DISABLED"
     const val DESIRED_ISOLATED = "ISOLATED"
 
+    const val CAPABILITY_PM_COMPONENT_STATE = "pm_component_state_shell"
+    const val ERR_SHELL_COMPONENT_STATE_DENIED = "SHELL_COMPONENT_STATE_DENIED"
+
     private const val TAG = "ShellOps"
 
     private val CORE_PROTECTED_PACKAGES = setOf(
@@ -207,6 +210,26 @@ object ShellOps {
         }
         if (bucket == null && appOps == null) return null
         return PriorIsolationState(bucket, appOps)
+    }
+
+    fun isComponentStateDeniedException(e: SecurityException): Boolean {
+        return e.message?.contains("Shell cannot change component state", ignoreCase = true) == true
+    }
+
+    suspend fun checkComponentStateCapability(
+        capabilityDao: CapabilityDao?,
+        fingerprint: String
+    ): Boolean {
+        return capabilityDao?.isSupported(CAPABILITY_PM_COMPONENT_STATE, fingerprint) != false
+    }
+
+    suspend fun recordComponentStateDenial(
+        capabilityDao: CapabilityDao?,
+        fingerprint: String
+    ) {
+        capabilityDao?.upsert(
+            Capability(CAPABILITY_PM_COMPONENT_STATE, false, fingerprint, System.currentTimeMillis())
+        )
     }
 
     fun isSafeListed(context: Context, pkg: String, componentName: String? = null): Boolean {
