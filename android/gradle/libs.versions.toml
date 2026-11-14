@@ -1,0 +1,53 @@
+[versions]
+agp = "8.6.1"
+kotlin = "2.0.20"
+ksp = "2.0.20-1.0.25"
+room = "2.6.1"
+work = "2.9.1"
+serialization = "1.7.3"
+profileinstaller = "1.4.1"
+shizuku = "13.1.5"
+hidden-stub = "4.4.0"
+hidden-compat = "4.4.0"
+refine = "4.4.0"
+hiddenapibypass = "6.1"
+core-ktx = "1.13.1"
+appcompat = "1.7.0"
+annotation = "1.8.2"
+coroutines = "1.9.0"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+
+# Room
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+# WorkManager
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+
+# ProfileInstaller
+androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
+
+# Shizuku
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
+
+# Hidden API & Refine
+hidden-stub = { module = "dev.rikka.hidden:stub", version.ref = "hidden-stub" }
+hidden-compat = { module = "dev.rikka.hidden:compat", version.ref = "hidden-compat" }
+refine-runtime = { module = "dev.rikka.tools.refine:runtime", version.ref = "refine" }
+refine-annotation = { module = "dev.rikka.tools.refine:annotation", version.ref = "refine" }
+hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+refine = { id = "dev.rikka.tools.refine", version.ref = "refine" }

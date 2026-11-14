@@ -1,0 +1,27 @@
+# Local machine & Android Studio / Antigravity paths
+**/local.properties
+local.properties
+.idea/
+**/.idea/
+.gradle/
+**/.gradle/
+.cxx/
+**/build/
+build/
+captures/
+
+# Keys, binaries & large ML artifacts
+*.keystore
+*.jks
+*.apk
+*.aab
+*.onnx
+*.bin
+*.bloom
+
+# OS & Python virtual environments
+.DS_Store
+Thumbs.db
+__pycache__/
+.venv/
+venv/
