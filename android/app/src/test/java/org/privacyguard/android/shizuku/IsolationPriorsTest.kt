@@ -35,17 +35,25 @@ class IsolationPriorsTest {
         assertTrue(ShellOps.isSettableBucket("30"))
         assertTrue(ShellOps.isSettableBucket("40"))
         assertTrue(ShellOps.isSettableBucket("45"))
+        assertTrue(ShellOps.isSettableBucket("50"))
         assertTrue(ShellOps.isSettableBucket("active"))
         assertTrue(ShellOps.isSettableBucket("rare"))
         assertTrue(ShellOps.isSettableBucket("restricted"))
+        assertTrue(ShellOps.isSettableBucket("never"))
 
-        // Non-settable values (exempted=5, never=50)
+        // Non-settable values (exempted=5)
         assertFalse(ShellOps.isSettableBucket("5"))
-        assertFalse(ShellOps.isSettableBucket("50"))
         assertFalse(ShellOps.isSettableBucket("exempted"))
-        assertFalse(ShellOps.isSettableBucket("never"))
         assertFalse(ShellOps.isSettableBucket(null))
         assertFalse(ShellOps.isSettableBucket(""))
+    }
+
+    @Test
+    fun `test parsePriors with empty bucket suffix`() {
+        val priors = ShellOps.parsePriors("APPOPS_STANDBY_RESTRICTED|bucket=|appops=allow")
+        assertNotNull(priors)
+        assertNull(priors!!.bucket)
+        assertEquals("allow", priors.appOpsMode)
     }
 
     @Test

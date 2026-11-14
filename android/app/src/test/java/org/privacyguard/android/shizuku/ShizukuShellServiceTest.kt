@@ -59,6 +59,11 @@ class ShizukuShellServiceTest {
             arrayOf("am", "set-standby-bucket", "--user", "0", "com.example.app", "restricted")
         )
         assertNull(error)
+
+        val errorNever = ShizukuShellService.validateCommand(
+            arrayOf("am", "set-standby-bucket", "--user", "0", "com.example.app", "never")
+        )
+        assertNull(errorNever)
     }
 
     @Test

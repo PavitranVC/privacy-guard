@@ -149,7 +149,7 @@ object ShellOps {
         val observedString: String
     )
 
-    val SETTABLE_BUCKETS = setOf("10", "20", "30", "40", "45", "active", "working_set", "frequent", "rare", "restricted")
+    val SETTABLE_BUCKETS = setOf("10", "20", "30", "40", "45", "50", "active", "working_set", "frequent", "rare", "restricted", "never")
 
     fun isSettableBucket(bucket: String?): Boolean {
         if (bucket.isNullOrBlank()) return false
