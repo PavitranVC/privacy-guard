@@ -221,14 +221,13 @@ object ShellOps {
         return PriorIsolationState(bucket, appOps)
     }
 
-    fun shouldReusePriors(status: String?, observed: String?): Boolean {
-        if (status != PolicyOp.STATUS_APPLYING && status != PolicyOp.STATUS_FAILED_TRANSIENT) {
-            return false
-        }
+    fun shouldReusePriors(observed: String?): Boolean {
         if (observed.isNullOrBlank()) return false
         val priors = parsePriors(observed)
         return priors != null
     }
+
+    fun shouldReusePriors(status: String?, observed: String?): Boolean = shouldReusePriors(observed)
 
     fun isLegacyPartialWithoutSuffix(observed: String?): Boolean {
         return observed != null &&
@@ -418,7 +417,7 @@ object ShellOps {
 
         // Ladder Step 3: AppOps ignore + Standby bucket restricted
         try {
-            val reuse = shouldReusePriors(existingStatus, existingObserved)
+            val reuse = shouldReusePriors(existingObserved)
             val isLegacy = isLegacyPartialWithoutSuffix(existingObserved)
             val priors = when {
                 reuse -> parsePriors(existingObserved)

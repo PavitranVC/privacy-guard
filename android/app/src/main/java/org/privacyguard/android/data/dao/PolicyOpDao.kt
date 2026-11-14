@@ -128,7 +128,6 @@ interface PolicyOpDao {
     @Query("""
         UPDATE policy_op
         SET status = 'PENDING',
-            observed = NULL,
             gen = gen + 1,
             attempts = 0,
             nextAt = 0
@@ -139,7 +138,6 @@ interface PolicyOpDao {
     @Query("""
         UPDATE policy_op
         SET status = 'ROLLED_BACK_UNSAFE',
-            observed = NULL,
             errClass = 'CRASH_WATCHDOG_TRIGGERED',
             nextAt = 0,
             gen = gen + 1
@@ -174,7 +172,6 @@ interface PolicyOpDao {
         SET versionCode = :versionCode,
             lastUpdateTime = :lastUpdateTime,
             status = 'PENDING',
-            observed = NULL,
             attempts = 0,
             nextAt = 0,
             gen = gen + 1

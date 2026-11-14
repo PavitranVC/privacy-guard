@@ -107,32 +107,29 @@ class IsolationPriorsTest {
     fun `test shouldReusePriors and isLegacyPartialWithoutSuffix decision logic`() {
         val validObserved = "APPOPS_STANDBY_RESTRICTED|bucket=40|appops=ignore"
         val legacyNoSuffix = "APPOPS_STANDBY_RESTRICTED"
+        val malformedSuffix = "APPOPS_STANDBY_RESTRICTED|invalid_token"
 
-        // 1. Fresh PENDING (e.g. after SUPERSEDED, UNLOCKED, DRIFT, or fresh queue) -> MUST NOT reuse (read fresh)
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, validObserved))
-
-        // 2. Retry after transient failure or during active apply -> MUST reuse
+        // 1. Reuse when observed has priors in PENDING after drift or version reset
+        assertTrue(ShellOps.shouldReusePriors(validObserved))
+        assertTrue(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, validObserved))
         assertTrue(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, validObserved))
         assertTrue(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, validObserved))
 
-        // 3. Other statuses (e.g. APPLIED, SUPERSEDED, DRIFT) -> MUST NOT reuse
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_SUPERSEDED, validObserved))
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLIED, validObserved))
+        // 2. Read fresh when observed is null or empty
+        assertFalse(ShellOps.shouldReusePriors(null))
+        assertFalse(ShellOps.shouldReusePriors(""))
+        assertFalse(ShellOps.shouldReusePriors("   "))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, null))
 
-        // 4. Legacy no-suffix rows -> MUST NOT reuse, but detected as legacy
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, legacyNoSuffix))
+        // 3. Legacy no-suffix rows -> MUST NOT reuse, but detected as legacy
+        assertFalse(ShellOps.shouldReusePriors(legacyNoSuffix))
         assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, legacyNoSuffix))
         assertTrue(ShellOps.isLegacyPartialWithoutSuffix(legacyNoSuffix))
         assertFalse(ShellOps.isLegacyPartialWithoutSuffix(validObserved))
         assertFalse(ShellOps.isLegacyPartialWithoutSuffix(null))
-        assertFalse(ShellOps.isLegacyPartialWithoutSuffix(""))
 
-        // 5. Empty or null observed -> MUST NOT reuse
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, ""))
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, null))
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, ""))
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, null))
-        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, null))
+        // 4. Malformed suffix -> not reused
+        assertFalse(ShellOps.shouldReusePriors(malformedSuffix))
     }
 
     @Test
