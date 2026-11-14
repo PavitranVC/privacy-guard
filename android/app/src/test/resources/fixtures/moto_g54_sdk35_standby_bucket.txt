@@ -1,0 +1,105 @@
+### am get-standby-bucket (baseline)
+10
+
+### am help (standby-bucket commands)
+  set-standby-bucket [--user <USER_ID>] <PACKAGE> active|working_set|frequent|rare|restricted
+  get-standby-bucket [--user <USER_ID>] <PACKAGE>
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving active
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 10
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving working_set
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 20
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving frequent
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 30
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving rare
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 40
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving restricted
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 45
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving exempted
+EXIT: 255
+STDOUT: 
+STDERR: Error: Unknown bucket: exempted
+READ_BACK: 10
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving never
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 50
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 5
+EXIT: 255
+STDOUT: 
+STDERR: Exception occurred while executing 'set-standby-bucket':
+java.lang.IllegalArgumentException: Cannot set the standby bucket to 5
+	at com.android.server.usage.AppStandbyController.setAppStandbyBuckets(AppStandbyController.java:1754)
+	at com.android.server.usage.AppStandbyController.setAppStandbyBucket(AppStandbyController.java:1721)
+	at com.android.server.usage.UsageStatsService$BinderService.setAppStandbyBucket(UsageStatsService.java:2630)
+	at com.android.server.am.ActivityManagerShellCommand.runSetStandbyBucket(ActivityManagerShellCommand.java:3210)
+	at com.android.server.am.ActivityManagerShellCommand.onCommand(ActivityManagerShellCommand.java:383)
+	at com.android.modules.utils.BasicShellCommandHandler.exec(BasicShellCommandHandler.java:97)
+	at android.os.ShellCommand.exec(ShellCommand.java:38)
+	at com.android.server.am.ActivityManagerService.onShellCommand(ActivityManagerService.java:10899)
+	at android.os.Binder.shellCommand(Binder.java:1239)
+	at android.os.Binder.onTransact(Binder.java:1052)
+	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:5819)
+	at com.android.server.am.ActivityManagerService.onTransact(ActivityManagerService.java:2933)
+	at android.os.Binder.execTransactInternal(Binder.java:1520)
+	at android.os.Binder.execTransact(Binder.java:1453)
+READ_BACK: 10
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 10
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 10
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 20
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 20
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 30
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 30
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 40
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 40
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 45
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 45
+
+### am set-standby-bucket --user 0 com.ansangha.drdriving 50
+EXIT: 0
+STDOUT: 
+STDERR: 
+READ_BACK: 50

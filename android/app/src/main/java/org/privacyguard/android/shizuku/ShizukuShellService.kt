@@ -106,6 +106,7 @@ class ShizukuShellService : IShellService.Stub() {
             "pm disable",
             "am kill",
             "am set-standby-bucket",
+            "am get-standby-bucket",
             "dumpsys package",
             "dumpsys activity exit-info",
             "dumpsys activity"
@@ -154,6 +155,13 @@ class ShizukuShellService : IShellService.Stub() {
             if (binary == "pm" && subcmd in setOf("enable", "disable", "disable-user", "default-state")) {
                 if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it in '0'..'9' } || !COMPONENT_REGEX.matches(cmd[4])) {
                     return "Invalid component-only pm syntax: expected 'pm $subcmd --user <id> <pkg/component>', got: ${cmd.joinToString(" ")}"
+                }
+            }
+
+            // Enforce strict am get-standby-bucket syntax
+            if (binary == "am" && subcmd == "get-standby-bucket") {
+                if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it in '0'..'9' } || !PKG_REGEX.matches(cmd[4])) {
+                    return "Invalid am get-standby-bucket syntax: expected 'am get-standby-bucket --user <id> <pkg>', got: ${cmd.joinToString(" ")}"
                 }
             }
 

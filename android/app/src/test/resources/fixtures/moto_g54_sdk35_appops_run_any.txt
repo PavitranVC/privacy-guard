@@ -1,0 +1,22 @@
+### (a) cmd appops get --uid 10355 RUN_ANY_IN_BACKGROUND (baseline)
+No operations.
+Default mode: allow
+
+### (b) after cmd appops set --uid 10355 RUN_ANY_IN_BACKGROUND ignore
+Uid mode: RUN_ANY_IN_BACKGROUND: ignore
+
+### (c) after cmd appops set --uid 10355 RUN_ANY_IN_BACKGROUND allow
+No operations.
+Default mode: allow
+
+### (d) after cmd appops set --uid 10355 RUN_ANY_IN_BACKGROUND default
+Uid mode: RUN_ANY_IN_BACKGROUND: default
+
+### (e) after cmd appops set --uid 10355 RUN_ANY_IN_BACKGROUND deny
+SET_OUTPUT:  
+GET_OUTPUT:
+Uid mode: RUN_ANY_IN_BACKGROUND: deny
+
+### Final restored check cmd appops get --uid 10355 RUN_ANY_IN_BACKGROUND
+No operations.
+Default mode: allow

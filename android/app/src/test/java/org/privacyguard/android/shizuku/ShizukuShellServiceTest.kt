@@ -155,4 +155,32 @@ class ShizukuShellServiceTest {
             arrayOf("pm", "disable-user", "--user", "0", "com.foo.bar/com.foo.bar.Rcv", "extra")
         ))
     }
+
+    @Test
+    fun `test am get-standby-bucket validations`() {
+        // Valid get-standby-bucket command
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "get-standby-bucket", "--user", "0", "com.example.app")
+        ))
+
+        // Missing package argument
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "get-standby-bucket", "--user", "0")
+        ))
+
+        // Non-digit user ID
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "get-standby-bucket", "--user", "xyz", "com.example.app")
+        ))
+
+        // Invalid package without dot
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "get-standby-bucket", "--user", "0", "invalidpkg")
+        ))
+
+        // Extra trailing tokens
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "get-standby-bucket", "--user", "0", "com.example.app", "extra")
+        ))
+    }
 }

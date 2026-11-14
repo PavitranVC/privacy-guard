@@ -134,6 +134,81 @@ object ShellOps {
         UNISOLATABLE_ON_WIFI("UNISOLATABLE_ON_WIFI")
     }
 
+    data class PriorIsolationState(
+        val bucket: String?,
+        val appOpsMode: String?
+    )
+
+    data class NetworkIsolationOutcome(
+        val result: IsolationResult,
+        val observedString: String
+    )
+
+    val SETTABLE_BUCKETS = setOf("10", "20", "30", "40", "45", "active", "working_set", "frequent", "rare", "restricted")
+
+    fun isSettableBucket(bucket: String?): Boolean {
+        if (bucket.isNullOrBlank()) return false
+        return SETTABLE_BUCKETS.contains(bucket.trim().lowercase())
+    }
+
+    fun parseStandbyBucketOutput(stdout: String?): String? {
+        if (stdout.isNullOrBlank()) return null
+        for (line in stdout.trim().lines()) {
+            val l = line.trim()
+            if (l.all { it in '0'..'9' } && l.isNotEmpty()) return l
+            if (l.lowercase() in setOf("active", "working_set", "frequent", "rare", "restricted", "never")) return l
+        }
+        return null
+    }
+
+    fun parseAppOpsRunAnyOutput(stdout: String?): String {
+        if (stdout.isNullOrBlank()) return "allow"
+        val match = Regex("RUN_ANY_IN_BACKGROUND:\\s*([a-zA-Z]+)", RegexOption.IGNORE_CASE).find(stdout)
+        if (match != null) {
+            return match.groupValues[1].lowercase()
+        }
+        if (stdout.contains("No operations", ignoreCase = true)) {
+            return "allow"
+        }
+        return "allow"
+    }
+
+    fun formatIsolationResult(
+        baseResult: IsolationResult,
+        priorState: PriorIsolationState?
+    ): String {
+        if (priorState == null || (priorState.bucket == null && priorState.appOpsMode == null)) {
+            return baseResult.statusString
+        }
+        val b = priorState.bucket ?: ""
+        val a = priorState.appOpsMode ?: ""
+        return "${baseResult.statusString}|bucket=$b|appops=$a"
+    }
+
+    fun parsePriors(observed: String?): PriorIsolationState? {
+        if (observed == null) return null
+        if (!observed.startsWith("APPOPS_STANDBY_RESTRICTED")) return null
+        val parts = observed.split("|")
+        if (parts.size < 2) return null // Legacy format: no suffix
+        var bucket: String? = null
+        var appOps: String? = null
+        for (i in 1 until parts.size) {
+            val p = parts[i]
+            when {
+                p.startsWith("bucket=") -> {
+                    val v = p.removePrefix("bucket=").trim()
+                    if (v.isNotEmpty()) bucket = v
+                }
+                p.startsWith("appops=") -> {
+                    val v = p.removePrefix("appops=").trim()
+                    if (v.isNotEmpty()) appOps = v
+                }
+            }
+        }
+        if (bucket == null && appOps == null) return null
+        return PriorIsolationState(bucket, appOps)
+    }
+
     fun isSafeListed(context: Context, pkg: String, componentName: String? = null): Boolean {
         if (pkg == context.packageName) return true
         if (isCoreProtectedPackage(pkg) || isDynamicUpiOrPaymentApp(context, pkg) || isSystemApp(context, pkg)) return true
@@ -208,14 +283,15 @@ object ShellOps {
         context: Context,
         shellService: IShellService,
         pkg: String,
-        capabilityDao: CapabilityDao? = null
-    ): IsolationResult {
+        capabilityDao: CapabilityDao? = null,
+        existingObserved: String? = null
+    ): NetworkIsolationOutcome {
         val pm = context.packageManager
         val pkgInfo = try {
             pm.getPackageInfo(pkg, 0)
         } catch (_: Exception) {
             Log.e(TAG, "Package not found for isolation: $pkg")
-            return IsolationResult.UNISOLATABLE_ON_WIFI
+            return NetworkIsolationOutcome(IsolationResult.UNISOLATABLE_ON_WIFI, IsolationResult.UNISOLATABLE_ON_WIFI.statusString)
         }
 
         val appUid = pkgInfo.applicationInfo?.uid ?: 0
@@ -224,7 +300,7 @@ object ShellOps {
 
         if (pkgInfo.sharedUserId != null) {
             Log.w(TAG, "Shared UID detected; refusing UID firewall isolation to prevent collateral blocking")
-            return IsolationResult.UNISOLATABLE_ON_WIFI
+            return NetworkIsolationOutcome(IsolationResult.UNISOLATABLE_ON_WIFI, IsolationResult.UNISOLATABLE_ON_WIFI.statusString)
         }
 
         // Ladder Step 1: Chain 3 package networking
@@ -236,7 +312,7 @@ object ShellOps {
                 val r1 = shellService.exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "false", pkg))
                 checkSecurityDenial(r1.stderr)
                 if (r1.exitCode == 0) {
-                    return IsolationResult.CHAIN3_SUCCESS
+                    return NetworkIsolationOutcome(IsolationResult.CHAIN3_SUCCESS, IsolationResult.CHAIN3_SUCCESS.statusString)
                 }
             } catch (e: SecurityException) {
                 throw e
@@ -254,7 +330,7 @@ object ShellOps {
             val r2 = shellService.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
             checkSecurityDenial(r2.stderr)
             if (r2.exitCode == 0) {
-                return IsolationResult.CHAIN9_SUCCESS
+                return NetworkIsolationOutcome(IsolationResult.CHAIN9_SUCCESS, IsolationResult.CHAIN9_SUCCESS.statusString)
             }
         } catch (e: SecurityException) {
             throw e
@@ -268,6 +344,18 @@ object ShellOps {
 
         // Ladder Step 3: AppOps ignore + Standby bucket restricted
         try {
+            // Read prior state ONLY if not already preserved from a previous apply
+            val existingPriors = parsePriors(existingObserved)
+            val priors = if (existingPriors != null) {
+                existingPriors
+            } else {
+                val rReadBucket = shellService.exec(arrayOf("am", "get-standby-bucket", "--user", userId.toString(), pkg))
+                val priorBucket = parseStandbyBucketOutput(rReadBucket.stdout)
+                val rReadAppOps = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
+                val priorAppOps = parseAppOpsRunAnyOutput(rReadAppOps.stdout)
+                PriorIsolationState(priorBucket, priorAppOps)
+            }
+
             val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"))
             checkSecurityDenial(rAppOps.stderr)
             val rBucket = shellService.exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "restricted"))
@@ -277,7 +365,8 @@ object ShellOps {
             val verifyOut = verify.stdout
             val pattern = Regex("RUN_ANY_IN_BACKGROUND:\\s*ignore", RegexOption.IGNORE_CASE)
             if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
-                return IsolationResult.APPOPS_PARTIAL
+                val formattedStatus = formatIsolationResult(IsolationResult.APPOPS_PARTIAL, priors)
+                return NetworkIsolationOutcome(IsolationResult.APPOPS_PARTIAL, formattedStatus)
             }
         } catch (e: SecurityException) {
             throw e
@@ -289,7 +378,7 @@ object ShellOps {
             Log.w(TAG, "Ladder step 3 (appops/standby) failed", e)
         }
 
-        return IsolationResult.UNISOLATABLE_ON_WIFI
+        return NetworkIsolationOutcome(IsolationResult.UNISOLATABLE_ON_WIFI, IsolationResult.UNISOLATABLE_ON_WIFI.statusString)
     }
 
     /**

@@ -221,18 +221,18 @@ class ShizukuManager private constructor(private val appContext: Context) {
         try {
             when (op.op) {
                 "isolate_wifi" -> {
-                    val result = ShellOps.isolatePackageNetworking(appContext, service, op.pkg, db.capabilityDao())
+                    val outcome = ShellOps.isolatePackageNetworking(appContext, service, op.pkg, db.capabilityDao(), op.observed)
                     withContext(NonCancellable) {
-                        rowsUpdated = when (result) {
+                        rowsUpdated = when (outcome.result) {
                             ShellOps.IsolationResult.UNISOLATABLE_ON_WIFI ->
-                                db.policyOpDao().markFailedPermanent(op.id, activeGen, result.statusString)
+                                db.policyOpDao().markFailedPermanent(op.id, activeGen, outcome.observedString)
                             ShellOps.IsolationResult.APPOPS_PARTIAL -> {
                                 opSucceeded = true
-                                db.policyOpDao().markAppliedPartial(op.id, activeGen, result.statusString)
+                                db.policyOpDao().markAppliedPartial(op.id, activeGen, outcome.observedString)
                             }
                             else -> {
                                 opSucceeded = true
-                                db.policyOpDao().markApplied(op.id, activeGen, result.statusString)
+                                db.policyOpDao().markApplied(op.id, activeGen, outcome.observedString)
                             }
                         }
                         opSucceeded = opSucceeded && (rowsUpdated == 1)
@@ -391,8 +391,17 @@ class ShizukuManager private constructor(private val appContext: Context) {
                             reverted = (r.exitCode == 0)
                         }
                         observed.startsWith("APPOPS_STANDBY_RESTRICTED") -> {
-                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                            val priors = ShellOps.parsePriors(observed)
+                            val targetAppOps = priors?.appOpsMode ?: "allow"
+                            val targetBucket = priors?.bucket ?: "active"
+
+                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", targetAppOps))
+                            val rBucket = if (ShellOps.isSettableBucket(targetBucket)) {
+                                exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, targetBucket))
+                            } else {
+                                Log.w(TAG, "Skipping standby bucket rollback for non-settable value: $targetBucket")
+                                ShellResult(0, "", "")
+                            }
                             reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
                         }
                         else -> {
