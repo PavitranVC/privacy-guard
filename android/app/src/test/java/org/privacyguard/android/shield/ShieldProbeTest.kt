@@ -88,4 +88,16 @@ class ShieldProbeTest {
         )
         assertEquals(TunnelStatus.INCONCLUSIVE, result)
     }
+
+    @Test
+    fun `v4 differs but v6 vpn-only returns INCONCLUSIVE`() {
+        val result = ShieldProbe.classifyTunnel(
+            vpnV4 = "198.51.100.1",
+            vpnV6 = "2001:db8:vpn::1",
+            physV4 = "192.0.2.1",
+            physV6 = null,
+            hasPhysical = true
+        )
+        assertEquals(TunnelStatus.INCONCLUSIVE, result)
+    }
 }

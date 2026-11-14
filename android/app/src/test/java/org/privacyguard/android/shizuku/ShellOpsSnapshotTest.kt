@@ -17,6 +17,14 @@ class ShellOpsSnapshotTest {
     }
 
     @Test
+    fun `mergeSnapshots with empty json object existing returns current`() {
+        val current = """{"A":2,"B":1}"""
+        val mergedJson = ShellOps.mergeSnapshots("{}", current)
+        val resultMap = Json.decodeFromString<Map<String, Int>>(mergedJson)
+        assertEquals(mapOf("A" to 2, "B" to 1), resultMap)
+    }
+
+    @Test
     fun `mergeSnapshots preserves existing values for keys in both`() {
         val existing = """{"A":1}"""
         val current = """{"A":2,"B":1}"""

@@ -27,8 +27,8 @@ data class OsintVerdict(
 
 sealed class ClassificationResult {
     data class Success(val verdict: OsintVerdict) : ClassificationResult()
-    object Unreachable : ClassificationResult()   // SocketTimeout, ConnectException, 5xx, or offline
-    object Invalid : ClassificationResult()       // 200 returned but JSON unparseable / missing fields / invalid verdict
+    object Unreachable : ClassificationResult()   // SocketTimeout, ConnectException, 404, 408, 429, 5xx, or offline
+    object Invalid : ClassificationResult()       // 200-with-bad-body or 400
 }
 
 class OllamaClient(
@@ -74,7 +74,11 @@ class OllamaClient(
 
             val responseCode = conn.responseCode
             if (responseCode == 200) {
-                val respBody = conn.inputStream.bufferedReader().use { it.readText() }
+                val respBody = try {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } catch (_: Throwable) {
+                    return ClassificationResult.Invalid
+                }
                 try {
                     val rawResp = json.decodeFromString(OllamaGenerateResponse.serializer(), respBody)
                     val verdict = json.decodeFromString(OsintVerdict.serializer(), rawResp.response)
@@ -87,10 +91,12 @@ class OllamaClient(
                 } catch (_: Throwable) {
                     ClassificationResult.Invalid
                 }
-            } else if (responseCode >= 500) {
+            } else if (responseCode == 400) {
+                ClassificationResult.Invalid
+            } else if (responseCode in setOf(404, 408, 429) || responseCode >= 500) {
                 ClassificationResult.Unreachable
             } else {
-                ClassificationResult.Invalid
+                ClassificationResult.Unreachable
             }
         } catch (_: java.net.SocketTimeoutException) {
             ClassificationResult.Unreachable
@@ -104,18 +110,6 @@ class OllamaClient(
             ClassificationResult.Unreachable
         } finally {
             conn?.disconnect()
-        }
-    }
-
-    fun queryClassification(
-        packageName: String,
-        certSha256: String,
-        dangerousPermissions: List<String>,
-        detectedTrackers: List<String>
-    ): OsintVerdict? {
-        return when (val result = classify(packageName, certSha256, dangerousPermissions, detectedTrackers)) {
-            is ClassificationResult.Success -> result.verdict
-            else -> null
         }
     }
 }

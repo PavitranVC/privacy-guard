@@ -180,10 +180,13 @@ BUILD SUCCESSFUL in 12s
    - Replaced `Char.isDigit()` with strict ASCII digit check `it in '0'..'9'`, rejecting Unicode digits.
 9. `android/app/src/test/java/org/privacyguard/android/shizuku/ShizukuShellServiceTest.kt`
    - Added negative tests for whole-package pm commands, non-ASCII Unicode user IDs (`٠`), combined flags (`--user=0`), and extra trailing tokens.
-10. `android/app/src/test/resources/fixtures/moto_g54_sdk35_exit_info.txt`
-    - Real Moto G54 5G (Android 15 / SDK 35) `dumpsys activity exit-info` golden fixture.
+10. Real Moto G54 fixtures:
+    - `android/app/src/test/resources/fixtures/moto_g54_sdk35_exit_info.txt`
+      Captured via: `adb shell dumpsys activity exit-info com.google.android.apps.restore | Out-File -Encoding ascii moto_g54_sdk35_exit_info.txt` (contains genuine benign system kills reason=13).
+    - `android/app/src/test/resources/fixtures/moto_g54_sdk35_exit_info_crash.txt`
+      Captured via: `adb shell monkey -p com.google.android.calculator 1 ; Start-Sleep -Seconds 3 ; adb shell am crash com.google.android.calculator ; Start-Sleep -Seconds 3 ; adb shell dumpsys activity exit-info com.google.android.calculator | Out-File -Encoding ascii moto_g54_sdk35_exit_info_crash.txt` (contains genuine app crash reason=4).
 11. `android/app/src/test/java/org/privacyguard/android/work/CrashWatchdogParsingTest.kt`
-    - Added tests verifying `hasCrashInWindow` on the real Moto G54 fixture for reason=4 (CRASH at 18:16:12) vs reason=13 (OTHER at 07:48:20) and verifying subreason=4 on same line does not trigger crash detection.
+    - Added tests verifying `hasCrashInWindow` on genuine Moto G54 fixtures for reason=4 (CRASH) vs reason=13 (OTHER) and verifying subreason=4 on same line does not trigger crash detection.
 
 ## 2. Manifest, Privileges & Attack Surface
 - No permissions added.

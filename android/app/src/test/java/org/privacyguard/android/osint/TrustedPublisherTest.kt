@@ -30,17 +30,10 @@ class TrustedPublisherTest {
     }
 
     @Test
-    fun `real fdroid signal duckduckgo and mozilla certs with their packages pass gate`() {
-        val fdroidCert = "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
-        assertTrue(OsintClassifierWorker.isTrustedPublisher(fdroidCert, "org.fdroid.fdroid"))
-
-        val signalCert = "29f34e5f27f21172404b86963ff36090d026338d30248232b60a4630737d0c65"
-        assertTrue(OsintClassifierWorker.isTrustedPublisher(signalCert, "org.thoughtcrime.securesms"))
-
-        val ddgCert = "a93540e90c749ef15494cb3bf1d2105c317faab2d735fbfaaa0f9c2d1b848039"
-        assertTrue(OsintClassifierWorker.isTrustedPublisher(ddgCert, "com.duckduckgo.mobile.android"))
-
-        val mozillaCert = "80292bf185123d4512c1c6676f2f9c57d77b28203f1eb9c97b2d56a2bb0364c6"
-        assertTrue(OsintClassifierWorker.isTrustedPublisher(mozillaCert, "org.mozilla.firefox"))
+    fun `unpinned packages fail gate`() {
+        val anyCert = "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"
+        assertFalse(OsintClassifierWorker.isTrustedPublisher(anyCert, "org.fdroid.fdroid"))
+        assertFalse(OsintClassifierWorker.isTrustedPublisher(anyCert, "org.thoughtcrime.securesms"))
+        assertFalse(OsintClassifierWorker.isTrustedPublisher(anyCert, "org.mozilla.firefox"))
     }
 }

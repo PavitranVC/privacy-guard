@@ -83,7 +83,7 @@ class OsintClassifierWorker(
                     }
                     is ClassificationResult.Unreachable -> {
                         Log.w(TAG, "Ollama local LAN endpoint unreachable for ${item.pkg}")
-                        return if (runAttemptCount < 3) {
+                        return if (runAttemptCount < 2) {
                             Result.retry()
                         } else {
                             Result.failure()
@@ -117,18 +117,6 @@ class OsintClassifierWorker(
             "com.google.android.gms" to setOf(
                 "5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402", // Google Play Services v3 rotated leaf signer on Android 15 / SDK 35
                 "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83"  // Google Play Services original signer / lineage ancestor
-            ),
-            "org.fdroid.fdroid" to setOf(
-                "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"  // F-Droid official client release key
-            ),
-            "org.mozilla.firefox" to setOf(
-                "80292bf185123d4512c1c6676f2f9c57d77b28203f1eb9c97b2d56a2bb0364c6"  // Mozilla Firefox release key
-            ),
-            "com.duckduckgo.mobile.android" to setOf(
-                "a93540e90c749ef15494cb3bf1d2105c317faab2d735fbfaaa0f9c2d1b848039"  // DuckDuckGo release key
-            ),
-            "org.thoughtcrime.securesms" to setOf(
-                "29f34e5f27f21172404b86963ff36090d026338d30248232b60a4630737d0c65"  // Signal release key
             )
         )
 
