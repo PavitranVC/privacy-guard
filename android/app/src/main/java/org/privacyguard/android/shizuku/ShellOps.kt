@@ -198,6 +198,31 @@ object ShellOps {
         }
     }
 
+    fun buildIsolationStep3ApplyCommands(
+        uid: Int,
+        userId: Int,
+        pkg: String
+    ): List<Array<String>> {
+        return listOf(
+            arrayOf("cmd", "appops", "set", "--uid", uid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"),
+            arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "restricted")
+        )
+    }
+
+    fun buildIsolationRollbackCommands(
+        priors: PriorIsolationState?,
+        uid: Int,
+        userId: Int,
+        pkg: String
+    ): List<Array<String>> {
+        val targetAppOps = resolveRollbackAppOps(priors)
+        val targetBucket = resolveRollbackBucket(priors)
+        return listOf(
+            arrayOf("cmd", "appops", "set", "--uid", uid.toString(), "RUN_ANY_IN_BACKGROUND", targetAppOps),
+            arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, targetBucket)
+        )
+    }
+
     fun parseAppOpsRunAnyOutput(stdout: String?): String? {
         if (stdout.isNullOrBlank()) return null
         val match = Regex("RUN_ANY_IN_BACKGROUND:\\s*([a-zA-Z]+)", RegexOption.IGNORE_CASE).find(stdout)
@@ -466,9 +491,10 @@ object ShellOps {
                 }
             }
 
-            val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"))
+            val applyCmds = buildIsolationStep3ApplyCommands(appUid, userId, pkg)
+            val rAppOps = shellService.exec(applyCmds[0])
             checkSecurityDenial(rAppOps.stderr)
-            val rBucket = shellService.exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "restricted"))
+            val rBucket = shellService.exec(applyCmds[1])
             checkSecurityDenial(rBucket.stderr)
 
             val verify = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))

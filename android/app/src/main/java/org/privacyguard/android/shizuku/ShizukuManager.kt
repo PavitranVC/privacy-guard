@@ -426,19 +426,18 @@ class ShizukuManager private constructor(private val appContext: Context) {
                         }
                         observed.startsWith("APPOPS_STANDBY_RESTRICTED") -> {
                             val priors = ShellOps.parsePriors(observed)
-                            val targetAppOps = ShellOps.resolveRollbackAppOps(priors)
-                            val targetBucket = ShellOps.resolveRollbackBucket(priors)
-
-                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", targetAppOps))
-                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, targetBucket))
+                            val rollbackCmds = ShellOps.buildIsolationRollbackCommands(priors, appInfo.uid, userId, pkg)
+                            val rAppOps = exec(rollbackCmds[0])
+                            val rBucket = exec(rollbackCmds[1])
                             reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
                         }
                         else -> {
                             // observed blank or unrecognized: run all three, success if the appops + bucket commands exit 0
                             exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
                             exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
-                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                            val rollbackCmds = ShellOps.buildIsolationRollbackCommands(null, appInfo.uid, userId, pkg)
+                            val rAppOps = exec(rollbackCmds[0])
+                            val rBucket = exec(rollbackCmds[1])
                             reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
                         }
                     }

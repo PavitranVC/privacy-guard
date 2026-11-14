@@ -212,4 +212,94 @@ class IsolationPriorsTest {
         assertEquals("allow", ShellOps.resolveRollbackAppOps(null))
         assertEquals("active", ShellOps.resolveRollbackBucket(null))
     }
+
+    @Test
+    fun `test buildIsolationStep3ApplyCommands passes validateCommand`() {
+        val applyCmds = ShellOps.buildIsolationStep3ApplyCommands(10355, 0, "com.ansangha.drdriving")
+        assertEquals(2, applyCmds.size)
+        assertNull(ShizukuShellService.validateCommand(applyCmds[0]))
+        assertNull(ShizukuShellService.validateCommand(applyCmds[1]))
+    }
+
+    @Test
+    fun `test buildIsolationRollbackCommands 113-combination validation matrix`() {
+        val buckets = listOf(
+            "10", "20", "30", "40", "45", "50",
+            "active", "working_set", "frequent", "rare", "restricted", "never",
+            "5", "garbage", "", null
+        )
+        val appOpsModes = listOf(
+            "allow", "ignore", "deny", "default", "foreground",
+            "garbage", null
+        )
+
+        var testedCombinations = 0
+
+        // 112 combinations of bucket x appOpsMode
+        for (b in buckets) {
+            for (a in appOpsModes) {
+                val priors = ShellOps.PriorIsolationState(bucket = b, appOpsMode = a)
+                val rollbackCmds = ShellOps.buildIsolationRollbackCommands(priors, 10355, 0, "com.ansangha.drdriving")
+                assertEquals(2, rollbackCmds.size)
+
+                val errAppOps = ShizukuShellService.validateCommand(rollbackCmds[0])
+                assertNull("cmd[0] failed validation for bucket=$b, appops=$a: $errAppOps", errAppOps)
+
+                val errBucket = ShizukuShellService.validateCommand(rollbackCmds[1])
+                assertNull("cmd[1] failed validation for bucket=$b, appops=$a: $errBucket", errBucket)
+
+                // Verify fallback behavior for non-settable buckets
+                if (b in setOf("10", "20", "30", "40", "45", "50", "active", "working_set", "frequent", "rare", "restricted", "never")) {
+                    assertEquals(b, rollbackCmds[1][5])
+                } else {
+                    assertEquals("active", rollbackCmds[1][5])
+                }
+
+                // Verify fallback behavior for non-valid appops
+                if (a in setOf("allow", "ignore", "deny", "default", "foreground")) {
+                    assertEquals(a, rollbackCmds[0][6])
+                } else {
+                    assertEquals("allow", rollbackCmds[0][6])
+                }
+
+                testedCombinations++
+            }
+        }
+
+        // 113th case: legacy (priors == null)
+        val legacyCmds = ShellOps.buildIsolationRollbackCommands(null, 10355, 0, "com.ansangha.drdriving")
+        assertEquals(2, legacyCmds.size)
+        assertNull(ShizukuShellService.validateCommand(legacyCmds[0]))
+        assertNull(ShizukuShellService.validateCommand(legacyCmds[1]))
+        assertEquals("allow", legacyCmds[0][6])
+        assertEquals("active", legacyCmds[1][5])
+        testedCombinations++
+
+        assertEquals(113, testedCombinations)
+    }
+
+    @Test
+    fun `test hostile prior string replaced by fallbacks and raw hostile rejected`() {
+        val hostileAppOps = "ignore; rm -rf /"
+        val hostileBucket = "../"
+
+        // 1. Raw un-sanitized commands with hostile input MUST be rejected by validateCommand
+        val rawHostileAppOpsCmd = arrayOf("cmd", "appops", "set", "--uid", "10355", "RUN_ANY_IN_BACKGROUND", hostileAppOps)
+        val rawHostileBucketCmd = arrayOf("am", "set-standby-bucket", "--user", "0", "com.ansangha.drdriving", hostileBucket)
+
+        assertNotNull(ShizukuShellService.validateCommand(rawHostileAppOpsCmd))
+        assertNotNull(ShizukuShellService.validateCommand(rawHostileBucketCmd))
+
+        // 2. The builder must sanitize/replace them with safe fallbacks ("allow" and "active")
+        val hostilePriors = ShellOps.PriorIsolationState(bucket = hostileBucket, appOpsMode = hostileAppOps)
+        val builtCmds = ShellOps.buildIsolationRollbackCommands(hostilePriors, 10355, 0, "com.ansangha.drdriving")
+
+        assertEquals(2, builtCmds.size)
+        assertEquals("allow", builtCmds[0][6])
+        assertEquals("active", builtCmds[1][5])
+
+        // 3. And the resulting commands MUST pass validateCommand
+        assertNull(ShizukuShellService.validateCommand(builtCmds[0]))
+        assertNull(ShizukuShellService.validateCommand(builtCmds[1]))
+    }
 }
