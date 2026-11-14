@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 import org.privacyguard.android.data.entity.AppScanResult
 
 @Dao
@@ -23,6 +24,9 @@ interface AppScanResultDao {
 
     @Query("SELECT * FROM app_scan_result ORDER BY riskScore DESC")
     suspend fun getAllSortedByRisk(): List<AppScanResult>
+
+    @Query("SELECT * FROM app_scan_result ORDER BY riskScore DESC")
+    fun observeAllSortedByRisk(): Flow<List<AppScanResult>>
 
     @Query("DELETE FROM app_scan_result WHERE pkg = :pkg")
     suspend fun delete(pkg: String): Int

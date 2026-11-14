@@ -34,13 +34,14 @@ class ShizukuShellService : IShellService.Stub() {
         for (i in 2 until cmd.size) {
             val arg = cmd[i]
             if (arg.startsWith("-")) continue
-            if (arg.contains("/") && !COMPONENT_REGEX.matches(arg)) {
-                return ShellResult(-1, "", "Invalid component argument: $arg")
-            } else if (!arg.contains("/") && !arg.all { it.isDigit() } && !PKG_REGEX.matches(arg) &&
-                       !arg.equals("restricted", ignoreCase = true) && !arg.equals("ignore", ignoreCase = true) &&
-                       !arg.equals("true", ignoreCase = true) && !arg.equals("false", ignoreCase = true) &&
-                       !arg.equals("exit-info", ignoreCase = true)) {
-                return ShellResult(-1, "", "Invalid package argument: $arg")
+            if (arg.contains("/")) {
+                if (!COMPONENT_REGEX.matches(arg)) {
+                    return ShellResult(-1, "", "Invalid component argument: $arg")
+                }
+            } else if (!arg.all { it.isDigit() } &&
+                       !PKG_REGEX.matches(arg) &&
+                       !ALLOWED_KEYWORDS.contains(arg)) {
+                return ShellResult(-1, "", "Invalid package or keyword argument: $arg")
             }
         }
 
@@ -111,7 +112,15 @@ class ShizukuShellService : IShellService.Stub() {
             "pm disable",
             "am kill",
             "am set-standby-bucket",
+            "dumpsys package",
+            "dumpsys activity exit-info",
             "dumpsys activity"
+        )
+
+        private val ALLOWED_KEYWORDS = setOf(
+            "restricted", "rare", "ignore", "true", "false", "exit-info",
+            "set-chain3-enabled", "set-package-networking-enabled",
+            "oem_deny_3", "add", "remove", "set", "get", "RUN_ANY_IN_BACKGROUND"
         )
     }
 }

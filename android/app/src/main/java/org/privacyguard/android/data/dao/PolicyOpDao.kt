@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
 import org.privacyguard.android.data.entity.PolicyOp
 
 @Dao
@@ -21,6 +22,12 @@ interface PolicyOpDao {
 
     @Query("SELECT * FROM policy_op WHERE pkg = :pkg")
     suspend fun getByPackage(pkg: String): List<PolicyOp>
+
+    @Query("SELECT * FROM policy_op WHERE pkg = :pkg ORDER BY id ASC")
+    fun observeByPackage(pkg: String): Flow<List<PolicyOp>>
+
+    @Query("SELECT * FROM policy_op ORDER BY id ASC")
+    fun observeAll(): Flow<List<PolicyOp>>
 
     @Query("SELECT * FROM policy_op WHERE status = :status ORDER BY nextAt ASC, id ASC")
     suspend fun getByStatus(status: String): List<PolicyOp>
@@ -138,6 +145,16 @@ interface PolicyOpDao {
         WHERE id = :id AND gen = :expectedGen
     """)
     suspend fun markRolledBackUnsafe(id: Long, expectedGen: Long): Int
+
+    @Query("""
+        UPDATE policy_op
+        SET status = 'SUPERSEDED',
+            errClass = 'ROLLED_BACK_BY_USER',
+            nextAt = 0,
+            gen = gen + 1
+        WHERE id = :id AND gen = :expectedGen
+    """)
+    suspend fun markSuperseded(id: Long, expectedGen: Long): Int
 
     @Query("""
         UPDATE policy_op

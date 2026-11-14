@@ -52,3 +52,9 @@
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+
+# Jetpack Compose & ViewModel
+-keep class * extends androidx.lifecycle.ViewModel {
+    <init>(...);
+}
+-keep class org.privacyguard.android.ui.** { *; }

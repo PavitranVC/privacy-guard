@@ -116,11 +116,12 @@ object ShieldProbe {
     private fun probeCanarySinkhole(): Boolean {
         return try {
             val addresses = InetAddress.getAllByName(CANARY_TRACKER_HOST)
-            addresses.all { addr ->
+            addresses.isNotEmpty() && addresses.all { addr ->
                 addr.isAnyLocalAddress ||
                         addr.isLoopbackAddress ||
                         addr.hostAddress == "0.0.0.0" ||
                         addr.hostAddress == "::" ||
+                        addr.hostAddress == "0:0:0:0:0:0:0:0" ||
                         addr.hostAddress == "127.0.0.1" ||
                         addr.hostAddress == "::1"
             }

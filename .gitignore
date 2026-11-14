@@ -5,6 +5,8 @@ local.properties
 **/.idea/
 .gradle/
 **/.gradle/
+.kotlin/
+**/.kotlin/
 .cxx/
 **/build/
 build/

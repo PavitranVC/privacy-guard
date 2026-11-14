@@ -20,6 +20,10 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.privacyguard.android.BuildConfig
 import org.privacyguard.android.data.AppDatabase
 import org.privacyguard.android.data.entity.PolicyOp
@@ -303,6 +307,74 @@ class ShizukuManager private constructor(private val appContext: Context) {
             ExistingWorkPolicy.KEEP,
             watchdogRequest
         )
+    }
+
+    suspend fun rollbackPackage(pkg: String): Boolean = withContext(ioSingle) {
+        if (!isReady()) return@withContext false
+        val db = AppDatabase.getInstance(appContext)
+        val ops = db.policyOpDao().getByPackage(pkg)
+        val pm = appContext.packageManager
+        val appInfo = try {
+            pm.getApplicationInfo(pkg, 0)
+        } catch (_: Throwable) {
+            return@withContext false
+        }
+        val userId = appInfo.uid / 100000
+
+        var overallSuccess = true
+        for (op in ops) {
+            if (op.snapshot.isNullOrBlank()) {
+                if (op.op == "isolate_wifi") {
+                    try {
+                        exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                        exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                        exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                        db.policyOpDao().markSuperseded(op.id, op.gen)
+                    } catch (_: Throwable) {
+                        overallSuccess = false
+                    }
+                }
+                continue
+            }
+
+            try {
+                val jsonMap = Json.parseToJsonElement(op.snapshot).jsonObject
+                var opRestored = true
+                for ((compNameStr, stateElem) in jsonMap) {
+                    val state = stateElem.jsonPrimitive.intOrNull ?: 0
+                    val componentName = ComponentName(pkg, compNameStr)
+                    val flatName = componentName.flattenToString()
+
+                    val cmd = when (state) {
+                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED ->
+                            arrayOf("pm", "enable", "--user", userId.toString(), flatName)
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED ->
+                            arrayOf("pm", "disable", "--user", userId.toString(), flatName)
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ->
+                            arrayOf("pm", "disable-user", "--user", userId.toString(), flatName)
+                        else ->
+                            arrayOf("pm", "default-state", "--user", userId.toString(), flatName)
+                    }
+
+                    val res = exec(cmd)
+                    val observed = pm.getComponentEnabledSetting(componentName)
+                    if (res.exitCode != 0 || (state != 0 && observed != state)) {
+                        opRestored = false
+                    }
+                }
+
+                if (opRestored) {
+                    db.policyOpDao().markSuperseded(op.id, op.gen)
+                } else {
+                    overallSuccess = false
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed rolling back op ${op.id} for $pkg", t)
+                overallSuccess = false
+            }
+        }
+
+        overallSuccess
     }
 
     companion object {
