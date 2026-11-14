@@ -241,3 +241,15 @@ On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --u
 - Chain 9 (oem_deny_3) is an unknown command on this device.
 - Standby bucket values 10, 20, 30, 40, 45, 50 settable; 5 rejected by system server.
 - AppOps RUN_ANY_IN_BACKGROUND round-trips: mode "allow" removes the explicit override and restores baseline text.
+
+## Milestone M3.5-H (audit findings G1, G2, G4, and hardware app-path audit)
+- Item 1 (715e875): `parseAppOpsRunAnyOutput` strictly returns one of `{allow, ignore, deny, default, foreground}` or null; added "deny" to `ALLOWED_KEYWORDS` in `ShizukuShellService`; unknown or invalid prior appops mode skips appops rollback with warning log while keeping bucket rollback non-throwing; added verbatim fixture `moto_g54_sdk35_appops_run_any_foreground.txt` and tests in `IsolationPriorsTest` and `ShizukuShellServiceTest`.
+- Item 2 (7f6e6e4): Priors reuse gated by `shouldReusePriors(status, observed)`: reused only on retrying `APPLYING` or `FAILED_TRANSIENT` when step 3 previously executed; fresh `PENDING` ops always read fresh priors; `markSuperseded`, `unlockRolledBackUnsafe`, `markDriftPending`, `markRolledBackUnsafe`, and `resetForNewVersion` clear `observed` to NULL; legacy rows without suffix detected via `isLegacyPartialWithoutSuffix` and record null priors to prevent reading already-restricted state; pure function tests added in `IsolationPriorsTest`.
+- Item 3 (a3e33ab): Added "50" and "never" to `SETTABLE_BUCKETS` in `ShellOps` and "never" to `ALLOWED_KEYWORDS` in `ShizukuShellService`; empty `bucket=` in suffix skips bucket restore with warning log without defaulting to "active"; legacy rows keep allow/active fallback; tests added in `IsolationPriorsTest` and `ShizukuShellServiceTest`.
+
+### Part 0 (G3) Probe and Package-Level AppOps Correction
+- In Part 0.3, diffing `_smoke_h` baselines against `_smoke_g` revealed that `com.ludo.king` had explicit `COARSE_LOCATION: allow` and `RECORD_AUDIO: allow` package entries, and `com.rarlab.rar` had `POST_NOTIFICATION: allow`.
+- In Part 0.5, probing `cmd appops get com.ludo.king COARSE_LOCATION` across baseline, `set ... ignore`, `set ... default`, and `set --uid ... allow` revealed that all states returned `COARSE_LOCATION: allow`. The M3.5-G claim that "package-level default writes an explicit allow entry" is contradicted by evidence: for runtime permissions managed by PermissionManager, `cmd appops set <pkg> <OP> <mode>` has no effect on the package-level appop output on Android 15 as shell.
+
+### Part 3 (Hardware App-Path Proof Audit)
+- Per 3.1 and Rule R9, checked dependencies in `android/app/build.gradle.kts` and `android/gradle/libs.versions.toml`: `androidTestImplementation` dependencies (`androidx.test:runner`, `androidx.test.ext:junit`) do not exist in the repository, and modifying build files or version catalogs is forbidden by R9. Per instruction 3.1, Part 3 stopped and reported.
