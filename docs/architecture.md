@@ -23,6 +23,7 @@
 ## 4. Idempotent Shizuku State Machine & Crash-Safe Remediation
 - **PrivilegeBackend & Shell Execution:**
   - Pluggable `PrivilegeBackend` interface (`val id: String`, `fun exec(cmd: Array<String>): ShellResult`) abstracts privileged command execution from concrete privilege providers.
+  - Use `dev.rikka.hidden:stub` + `dev.rikka.hidden:compat` + `dev.rikka.tools.refine` + `org.lsposed.hiddenapibypass` + a bound Shizuku `UserService` (`void destroy() = 16777114`) running under shell UID to execute `cmd` commands and return `(exitCode, stdout, stderr)` over AIDL.
   - `ShizukuBackend` (id = `"shizuku"`) delegates to a bound Shizuku `UserService` (`void destroy() = 16777114`) running under shell UID to execute allowlisted commands over AIDL. Root is a planned future backend behind an explicit user toggle (never auto-detected). Every backend must enforce the same command allowlist as `ShizukuShellService.validateCommand` before executing.
   - **Hardware Verification (Moto G54 / Android 15):** Component-level `pm enable|disable|disable-user` is denied for other packages' components at shell privilege (`SecurityException: Shell cannot change component state for ...`). Viable non-root primitives at shell privilege are:
     1. Chain 3 per-package networking isolation (`cmd connectivity set-chain3-enabled true` + `set-package-networking-enabled false <pkg>`);
