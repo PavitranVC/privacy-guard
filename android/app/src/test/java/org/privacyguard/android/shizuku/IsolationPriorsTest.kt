@@ -216,6 +216,32 @@ class IsolationPriorsTest {
     }
 
     @Test
+    fun `test case normalisation and trimming for resolveRollbackBucket and resolveRollbackAppOps`() {
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("ACTIVE", "allow")))
+        assertEquals("restricted", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState(" Restricted ", "allow")))
+        assertEquals("ignore", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", "IGNORE")))
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", "Allow")))
+
+        val cmds1 = ShellOps.buildIsolationRollbackCommands(
+            ShellOps.PriorIsolationState(" Restricted ", "IGNORE"),
+            10355, 0, "com.ansangha.drdriving"
+        )
+        assertEquals("ignore", cmds1[0][6])
+        assertEquals("restricted", cmds1[1][5])
+        assertNull(ShizukuShellService.validateCommand(cmds1[0]))
+        assertNull(ShizukuShellService.validateCommand(cmds1[1]))
+
+        val cmds2 = ShellOps.buildIsolationRollbackCommands(
+            ShellOps.PriorIsolationState("ACTIVE", "Allow"),
+            10355, 0, "com.ansangha.drdriving"
+        )
+        assertEquals("allow", cmds2[0][6])
+        assertEquals("active", cmds2[1][5])
+        assertNull(ShizukuShellService.validateCommand(cmds2[0]))
+        assertNull(ShizukuShellService.validateCommand(cmds2[1]))
+    }
+
+    @Test
     fun `test buildIsolationStep3ApplyCommands passes validateCommand`() {
         val applyCmds = ShellOps.buildIsolationStep3ApplyCommands(10355, 0, "com.ansangha.drdriving")
         assertEquals(2, applyCmds.size)

@@ -169,12 +169,14 @@ object ShellOps {
     val VALID_APPOPS_MODES = setOf("allow", "ignore", "deny", "default", "foreground")
 
     fun isValidAppOpsMode(mode: String?): Boolean {
-        return mode != null && mode.lowercase() in VALID_APPOPS_MODES
+        if (mode.isNullOrBlank()) return false
+        return mode.trim().lowercase() in VALID_APPOPS_MODES
     }
 
     fun resolveRollbackAppOps(priors: PriorIsolationState?): String {
-        return if (priors != null && isValidAppOpsMode(priors.appOpsMode)) {
-            priors.appOpsMode!!
+        val trimmed = priors?.appOpsMode?.trim()?.lowercase()
+        return if (trimmed != null && isValidAppOpsMode(trimmed)) {
+            trimmed
         } else {
             if (priors != null && priors.appOpsMode != null) {
                 try {
@@ -186,8 +188,9 @@ object ShellOps {
     }
 
     fun resolveRollbackBucket(priors: PriorIsolationState?): String {
-        return if (priors != null && !priors.bucket.isNullOrBlank() && isSettableBucket(priors.bucket)) {
-            priors.bucket!!
+        val trimmed = priors?.bucket?.trim()?.lowercase()
+        return if (trimmed != null && isSettableBucket(trimmed)) {
+            trimmed
         } else {
             if (priors != null && priors.bucket != null) {
                 try {
