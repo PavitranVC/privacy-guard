@@ -100,11 +100,6 @@ class OsintClassifierWorker(
         return Result.success()
     }
 
-    private fun isTrustedPublisher(certSha256: String, pkg: String): Boolean {
-        if (certSha256.isBlank()) return false
-        return certSha256.lowercase().split(",").map { it.trim() }.any { it in TRUSTED_PUBLISHER_CERTS }
-    }
-
     private fun isSensitiveCategory(pkg: String): Boolean {
         val lowerPkg = pkg.lowercase()
         return SENSITIVE_KEYWORDS.any { lowerPkg.contains(it) }
@@ -117,11 +112,32 @@ class OsintClassifierWorker(
         const val VERDICT_CLEAN_TRUSTED_PUBLISHER = "CLEAN_TRUSTED_PUBLISHER"
         const val VERDICT_EXCLUDED_SENSITIVE = "EXCLUDED_SENSITIVE_CATEGORY"
 
-        // Pinned SHA-256 fingerprints of verified trusted publishers (Google Play Services original & v3 rotated)
-        private val TRUSTED_PUBLISHER_CERTS = setOf(
-            "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83", // Google Play Services original signer / lineage ancestor
-            "5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402"  // Google Play Services v3 rotated leaf signer on Android 15 / SDK 35
+        // Pinned SHA-256 fingerprints of verified trusted publishers per package name
+        internal val TRUSTED_PUBLISHER_CERTS: Map<String, Set<String>> = mapOf(
+            "com.google.android.gms" to setOf(
+                "5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402", // Google Play Services v3 rotated leaf signer on Android 15 / SDK 35
+                "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83"  // Google Play Services original signer / lineage ancestor
+            ),
+            "org.fdroid.fdroid" to setOf(
+                "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab"  // F-Droid official client release key
+            ),
+            "org.mozilla.firefox" to setOf(
+                "80292bf185123d4512c1c6676f2f9c57d77b28203f1eb9c97b2d56a2bb0364c6"  // Mozilla Firefox release key
+            ),
+            "com.duckduckgo.mobile.android" to setOf(
+                "a93540e90c749ef15494cb3bf1d2105c317faab2d735fbfaaa0f9c2d1b848039"  // DuckDuckGo release key
+            ),
+            "org.thoughtcrime.securesms" to setOf(
+                "29f34e5f27f21172404b86963ff36090d026338d30248232b60a4630737d0c65"  // Signal release key
+            )
         )
+
+        internal fun isTrustedPublisher(certSha256: String, pkg: String): Boolean {
+            if (certSha256.isBlank() || pkg.isBlank()) return false
+            val allowedCerts = TRUSTED_PUBLISHER_CERTS[pkg] ?: return false
+            val candidateCerts = certSha256.lowercase().split(",").map { it.trim() }
+            return candidateCerts.any { it in allowedCerts }
+        }
 
         // Sensitive domain keywords subject to strict zero-network transmission
         private val SENSITIVE_KEYWORDS = listOf(

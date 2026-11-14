@@ -151,9 +151,7 @@ object Tier1AScanner {
         val signers = if (signingInfo.hasMultipleSigners()) {
             signingInfo.apkContentsSigners?.toList() ?: emptyList()
         } else {
-            val contents = signingInfo.apkContentsSigners?.toList() ?: emptyList()
-            val history = signingInfo.signingCertificateHistory?.toList() ?: emptyList()
-            contents + history
+            signingInfo.apkContentsSigners?.toList() ?: emptyList()
         }
 
         if (signers.isEmpty()) return ""
