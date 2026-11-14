@@ -194,7 +194,7 @@ object ReconciliationCoordinator {
                     )
                     db.appScanResultDao().upsert(scanResult)
 
-                    // Drift check on existing applied ops for package
+                    // Drift check and failed-op re-queue on existing ops for package
                     val appliedOps = db.policyOpDao().getByPackage(req.pkg)
                     for (op in appliedOps) {
                         if (op.status == PolicyOp.STATUS_APPLIED || op.status == PolicyOp.STATUS_APPLIED_PARTIAL) {
@@ -202,6 +202,9 @@ object ReconciliationCoordinator {
                                 Log.w(TAG, "PolicyOp drifted for pkg=${req.pkg}, op=${op.op}, target=${op.target}")
                                 db.policyOpDao().markDriftPending(op.id, op.gen)
                             }
+                        } else if (op.status in setOf(PolicyOp.STATUS_FAILED_TRANSIENT, PolicyOp.STATUS_FAILED_PERMANENT)) {
+                            // Re-queue same-version failed ops on package update/reinstall
+                            db.policyOpDao().upsertPreservingSnapshotAndGen(op, packageReplaced = true)
                         }
                     }
                 }
@@ -257,6 +260,24 @@ object ReconciliationCoordinator {
         } catch (_: Throwable) {
             ""
         }
+    }
+
+    suspend fun handlePackageReplaced(context: Context, pkg: String) {
+        val db = AppDatabase.getInstance(context)
+        val existingOps = db.policyOpDao().getByPackage(pkg)
+        for (op in existingOps) {
+            if (op.status in setOf(
+                    PolicyOp.STATUS_SUPERSEDED,
+                    PolicyOp.STATUS_FAILED_PERMANENT,
+                    PolicyOp.STATUS_FAILED_TRANSIENT
+                )
+            ) {
+                db.policyOpDao().upsertPreservingSnapshotAndGen(op, packageReplaced = true)
+            }
+        }
+        val now = System.currentTimeMillis()
+        db.reconcileRequestDao().upsertRequestWithSeq(pkg, now, now)
+        scheduleDrainWork(context)
     }
 
     fun scheduleDrainWork(context: Context) {

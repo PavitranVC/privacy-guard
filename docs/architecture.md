@@ -16,7 +16,7 @@
 - **Active Dual-Socket Probe:** Bind sockets to VPN `Network` and `nc.underlyingNetworks.firstOrNull()` (`network.bindSocket()`), querying `https://1.1.1.1/cdn-cgi/trace`. Timeout on VPN = Stalled Tunnel; equal egress IPs = Tunnel Leak; verify `warp=on` when WARP is active.
 
 ## 3. Deterministic OSINT & Cryptographic Verification Engine
-- Single serialized `WorkManager` drain worker (`NetworkType.UNMETERED`, `setRequiresBatteryNotLow(true)`), ordered by descending ML risk, enforcing per-host `next_allowed_at` + exponential backoff (30s base) + negative TTL cache + multi-day jitter + decoy popular hashes.
+- Single serialized `WorkManager` drain worker (`NetworkType.UNMETERED`, `setRequiresBatteryNotLow(true)`), ordered by descending ML risk, enforcing per-host `next_allowed_at` + exponential backoff (30s base) + negative TTL cache + multi-day jitter.
 - Hash-only VirusTotal/MalwareBazaar lookups across `base.apk` and code splits (skipping `config.*` splits, never uploading APKs). Verify direct sideloads via `signingInfo.apkContentsSigners` and whole-APK SHA-256 against F-Droid (`/api/v1/packages/<pkg>`) and GitHub Releases (`asset.digest`).
 - Three-state evidence (`NO_DATA` != `CLEAN`). LLM (local LAN Ollama primary, free cloud fallback) extracts strict JSON (`kotlinx.serialization`) `(claim, source_url, evidence_type)` from stripped public text; deterministic Kotlin code computes final verdict (requires at least 2 Tier-1/2 sources for `malicious`).
 

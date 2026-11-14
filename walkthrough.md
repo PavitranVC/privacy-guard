@@ -1,158 +1,101 @@
-# Walkthrough: Final Release Remediation & Security Hardening (Post-M3 Principal Audit)
+# Walkthrough: Milestone M3.5 — Remediate All 9 Open Audit Items from v5
 
-## 1. Files Created/Modified
+## 1. Summary of Changes by Component
 
-### Shizuku Shell Sandbox & Lifecycle Hardening
-- `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuShellService.kt`:
-  - Added strict 3-token subcommand allowlist (`SUBCOMMANDS`) restricting `cmd connectivity`, `cmd appops`, `cmd package`, and `dumpsys activity`.
-  - Enforced canonical binary execution path (`/system/bin/<binary>`).
-  - Added bounded 2s pipe timeout on `stdoutFuture` and `stderrFuture` with `TimeoutException` cancellation to prevent hanging reader threads.
-  - Guaranteed process cleanup via `finally { process.destroyForcibly() }`.
-  - Hardened package regex (`^[a-zA-Z0-9_]+\.[a-zA-Z0-9_.]+$`) requiring at least one dot so command keywords cannot masquerade as packages.
-  - Extracted pure `validateCommand(cmd)` in companion object for unit testability without Android `Binder` dependencies.
-- `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuManager.kt`:
-  - Configured `SupervisorJob() + CoroutineExceptionHandler` on `ShizukuManager` scope.
-  - Added 2-second reconnect loop on `onServiceDisconnected`.
-  - Added 10-second watchdog in `checkAndBindUserService` to reset `isBinding = false` on hung bind calls.
-  - Enforced pre-mutation snapshot validation: verified non-empty snapshot and confirmed `savedRows == 1` before invoking component mutations.
-  - Switched crash watchdog registration from `ExistingWorkPolicy.KEEP` to `ExistingWorkPolicy.REPLACE`.
-  - Multi-status rollback filtering: processes eligible ops (`APPLIED`, `APPLIED_PARTIAL`, `DRIFT`, `APPLYING`, `FAILED_TRANSIENT`, `PENDING`) sorted by `id DESC`, with read-back verification matching `expectedState = if (state in 1..3) state else 0`.
+### 1. Dual-Stack VPN Leak Probe (`ShieldProbe.kt`)
+- Replaced the single-URL leak probe with explicit dual-stack address family probes:
+  - IPv4 trace URL: `https://1.1.1.1/cdn-cgi/trace`
+  - IPv6 trace URL: `https://[2606:4700:4700::1111]/cdn-cgi/trace`
+- Implemented `probeTraceIp(network: Network, urlString: String): String?` using `HttpsURLConnection` with 3000ms connect/read timeouts, `useCaches = false`, `Connection: close`, returning null on any `IOException`/`RuntimeException` and disconnecting in `finally`.
+- Implemented dual-stack leak detection:
+  - `val v4Leak = vpnIpv4 != null && physIpv4 != null && vpnIpv4 == physIpv4`
+  - `val v6Leak = vpnIpv6 != null && physIpv6 != null && vpnIpv6 == physIpv6`
+  - `val isLeaking = v4Leak || v6Leak`
+- Wrapped `Settings.Secure.getInt(cr, "always_on_vpn_lockdown", 0)` in `runCatching` to safely return `false` on `SecurityException`.
 
-### CrashWatchdogWorker & Room State Machine Hardening
-- `android/app/src/main/java/org/privacyguard/android/work/CrashWatchdogWorker.kt`:
-  - Fixed timestamp regex to capture full date-time (`timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})`), eliminating `substringBefore(" ")` date truncation that caused `ParseException`.
-  - Added negative lookbehind regex (`(?<![A-Za-z])reason=([4-7])\b`) to eliminate false-positive collision with `subreason=4`.
-  - Added numeric millisecond timestamp fallback (`timestamp=(\d{10,13})\b`).
-  - Enforced retry cap at 5 attempts (`if (runAttemptCount >= 5) return Result.failure()`).
-  - Re-queried fresh `PolicyOp.gen` from DB before calling `markRolledBackUnsafe`.
-  - Rejected restoration from blank or `{}` snapshots.
-- `android/app/src/main/java/org/privacyguard/android/data/dao/PolicyOpDao.kt`:
-  - Hardened `saveSnapshot` SQL with `CASE WHEN snapshot IS NULL OR snapshot = '' OR snapshot = '{}' THEN :snapshot ELSE snapshot END`.
-  - Added `@Query("SELECT COUNT(*) FROM policy_op WHERE pkg = :pkg AND op = :op AND status = 'ROLLED_BACK_UNSAFE'") suspend fun countLocked(...)`.
-  - Enforced lock refusal in `upsertPreservingSnapshotAndGen`: returns `-1L` if package has an active `ROLLED_BACK_UNSAFE` record.
-  - Added `userInitiated: Boolean = false` parameter: allows user to re-apply previously superseded or failed operations.
-  - Scoped `markDriftPending` exclusively to `APPLIED`, `APPLIED_PARTIAL`, and `DRIFT` states.
-  - Scoped `resetForNewVersion` with `AND status != 'ROLLED_BACK_UNSAFE'`.
+### 2. Cancel Blank-Snapshot PENDING Ops During Rollback (`ShizukuManager.kt`)
+- In `rollbackPackage(packageName: String)`:
+  - When iterating over ops for `packageName`, if an op has `status == "PENDING"` and `(op.snapshot.isNullOrBlank() || op.snapshot == "{}")`, calls `db.policyOpDao().markSuperseded(op.id, op.gen)` before `continue` so queued ops cannot execute after rollback finishes.
 
-### ShieldProbe, OSINT & UI Hardening
-- `android/app/src/main/java/org/privacyguard/android/shield/ShieldProbe.kt`:
-  - Guarded against offline false positive: verified `activeNetwork != null` before executing canary probe.
-  - Hardened canary probe: verifies `cloudflare-dns.com` resolves before declaring `CANARY_TRACKER_HOST` sinkholed.
-  - Physical underlying network discovery: queried `cm.allNetworks` for validated non-VPN network with internet capabilities (eliminating `@SystemApi` `getUnderlyingNetworks` dependency).
-  - Dual-stack physical vs VPN egress leak detection.
-  - Added `Connection: close` and `finally { conn?.disconnect() }` to prevent socket leaks.
-- `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`:
-  - Removed 40-character SHA-1 fingerprint and insecure AOSP testkey from `TRUSTED_PUBLISHER_CERTS`.
-  - Capped retry attempts at 5 and properly rethrew `CancellationException`.
-- `android/app/src/main/java/org/privacyguard/android/work/ReconcileDrainWorker.kt`:
-  - Capped retry attempts at 5 and rethrew `CancellationException`.
-- `android/app/src/main/java/org/privacyguard/android/ui/PrivacyGuardViewModel.kt`:
-  - Replaced synchronous main-thread `ShieldProbe.checkShield` initialization with `MutableStateFlow(UiState().shieldStatus)`, keeping all probe I/O on `Dispatchers.IO` via `reprobeShield()`.
-  - Added `ShellOps.isSafeListed` guard on `restrictBackgroundNetworking`.
-  - Used actual package `pkgInfo.longVersionCode` and `pkgInfo.lastUpdateTime` in policy op construction.
-  - Passed `userInitiated = true` to `upsertPreservingSnapshotAndGen`.
-- `android/app/src/main/java/org/privacyguard/android/ui/AppDetailScreen.kt`:
-  - Added `enabled = !isProtected` to background networking restriction button.
+### 3. Surface `ROLLED_BACK_UNSAFE` Lock & Add User Unlock Path (`PolicyOpDao.kt`, `PrivacyGuardViewModel.kt`)
+- In `PolicyOpDao.kt`:
+  - Added `unlockRolledBackUnsafe(pkg: String, opType: String, now: Long = System.currentTimeMillis()): Int` updating `status = 'SUPERSEDED'` and `errClass = 'UNLOCKED_BY_USER'`.
+- In `PrivacyGuardViewModel.kt`:
+  - Checked return value of `upsertPreservingSnapshotAndGen(...)`: if `-1L`, notifies the UI via `_statusMessage.value` that the operation is locked due to a prior crash rollback (`ROLLED_BACK_UNSAFE`).
+  - Added `unlockAndRetryPolicyOp(pkg: String, opType: String)` to unlock the op in Room and immediately re-trigger user-initiated policy execution.
 
-### Build & Signing Hardening
-- `android/app/build.gradle.kts`:
-  - Removed configuration-time file generation and hardcoded `"privacyguard123"` fallback.
-  - Read release credentials cleanly from `keystore/keystore.properties` or `PG_KEYSTORE_*` environment variables.
-  - Gracefully fallback to `signingConfig = null` when credentials are absent, with `-PrequireReleaseSigning=true` enforcement in task graph.
+### 4. Strict Component-Only `pm` Command Syntax (`ShizukuShellService.kt` & `ShizukuShellServiceTest.kt`)
+- In `ShizukuShellService.validateCommand`:
+  - When `binary == "pm"` and `subcmd in setOf("enable", "disable", "disable-user", "default-state")`:
+    - Enforces `cmd.size == 5 && cmd[2] == "--user" && cmd[3].isNotEmpty() && cmd[3].all { it.isDigit() } && COMPONENT_REGEX.matches(cmd[4])`.
+    - Rejects whole-package disable commands (missing component slash) and missing `--user <id>` flags.
+- In `ShizukuShellServiceTest.kt`:
+  - Added unit test asserting `pm disable-user --user 0 com.example.app/com.example.app.MyReceiver` is allowed.
+  - Added unit test asserting `pm disable-user --user 0 com.example.app` (no component slash) is rejected.
+  - Added unit test asserting `pm disable com.example.app/com.example.MyReceiver` (missing `--user <id>`) is rejected.
 
-### Unit Tests Created
-- `android/app/src/test/java/org/privacyguard/android/shizuku/ShizukuShellServiceTest.kt`: Unit tests for command validation, subcommand whitelist, package regex, and component syntax.
-- `android/app/src/test/java/org/privacyguard/android/work/CrashWatchdogParsingTest.kt`: Unit tests for `dumpsys` exit-info parsing, negative lookbehind reason regex, and date-time/numeric timestamp parsing.
+### 5. Deduplicate `CrashWatchdogWorker` Parser & Test Production Code (`CrashWatchdogWorker.kt` & `CrashWatchdogParsingTest.kt`)
+- In `CrashWatchdogWorker.kt`:
+  - Extracted exit-info parsing into companion method: `internal fun hasCrashInWindow(dumpsysOutput: String, appliedAtMs: Long, windowMs: Long = 60_000L): Boolean`.
+  - `doWork()` calls `hasCrashInWindow(dumpsysResult.stdout, appliedAt, 60_000L)`.
+- In `CrashWatchdogParsingTest.kt`:
+  - Deleted all duplicate regexes and parsers from the test file.
+  - Invokes `CrashWatchdogWorker.hasCrashInWindow` directly against multi-block fixtures for `reason=4 (CRASH)`, `reason=5 (CRASH_NATIVE)`, `reason=6 (ANR)`, `reason=10 (USER_REQUESTED)`, out-of-window timestamps, numeric epoch timestamps, and `subreason=4` non-crash scenarios.
 
----
+### 6. Clean Up OSINT Pins & Dead Decoys (`OsintClassifierWorker.kt`, `docs/architecture.md`)
+- In `OsintClassifierWorker.kt`:
+  - Deleted unused `DECOY_POPULAR_HASHES` constant.
+  - Removed unverified F-Droid and Mozilla SHA-256 certificate pins, keeping only the verified Google Play Services pin.
+  - Removed comments claiming `k=4` decoy queries are active.
+- In `docs/architecture.md`:
+  - Removed reference to "decoy popular hashes".
 
-## 2. Manifest, Privileges & Attack Surface
+### 7. Fail-Safe When `CrashWatchdogWorker` Exhausts Retries While Shizuku Is Down (`CrashWatchdogWorker.kt`)
+- In `CrashWatchdogWorker.doWork()`:
+  - If Shizuku is not ready (or `dumpsys` fails) and `runAttemptCount >= 4`:
+  - Re-reads op from `policyOpDao` and if still `APPLIED` or `APPLIED_PARTIAL`, calls `markDriftPending(freshOp.id, freshOp.gen)` before returning `Result.failure()` so `ReconciliationCoordinator` re-verifies upon reconnection.
 
-### Merged Manifest Audit
-Inspection of the merged release manifest (`android/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml`) confirms:
-- **`minSdkVersion`:** 34 (Android 14)
-- **`targetSdkVersion`:** 35 (Android 15)
-- **Exported Activities:** `org.privacyguard.android.ui.MainActivity` (`exported="true"` with `MAIN`/`LAUNCHER` intent filter).
-- **Exported Providers:** `rikka.shizuku.ShizukuProvider` (`exported="true"`, strictly guarded by `android.permission.INTERACT_ACROSS_USERS_FULL`).
-- **Exported Services:** `androidx.work.impl.background.systemjob.SystemJobService` (`exported="true"`, guarded by `android.permission.BIND_JOB_SERVICE` for platform JobScheduler).
-- **Isolated Processes:** `org.privacyguard.android.scan.ScanService` (`exported="false"`, `android:process=":scan"`).
-- **Attack Surface:** Exactly zero unauthorized or unprotected exported components.
+### 8. Split `ShellOps.isSafeListed` into Core Protected vs. System Policy (`ShellOps.kt`)
+- In `ShellOps.kt`:
+  - Added `isCoreProtectedPackage(packageName: String): Boolean` protecting core system apps (OS, GMS, Play Store, SystemUI, InCallUI, Settings, Messaging, Dialer) and common Indian UPI/banking apps (`net.one97.paytm`, `com.phonepe.app`, `com.google.android.apps.nbu.paisa.user`, `in.org.npci.upiapp`, `in.amazon.mShop.android.shopping`, `com.whatsapp`, `com.csam.icici.bank.imobile`, `com.sbi.lotusintouch`, `com.axis.mobile`, `com.snapwork.hdfc`).
+  - Added `isSystemApp(context: Context, pkg: String): Boolean`.
+  - Refactored `isSafeListed` to invoke `isCoreProtectedPackage(pkg) || isSystemApp(context, pkg)`.
 
-### Shizuku Privilege Execution Boundary
-- Bound `ShizukuShellService` runs strictly under Shell UID 2000.
-- Allowlisted binary execution strictly prepends `/system/bin/<binary>`.
-- Subcommand whitelist prevents bypasses (`cmd package uninstall` rejected; `cmd connectivity set-chain3-enabled` allowed).
-- All component mutations pass through `isSafeListed` checks protecting GMS, Play Store, notification listeners, and critical system components.
+### 9. Re-queue Same-Version `FAILED_TRANSIENT` / `FAILED_PERMANENT` on Package Replaced (`PolicyOpDao.kt`, `ReconciliationCoordinator.kt`, `PackageChangeReceiver.kt`)
+- In `PolicyOpDao.kt`:
+  - Added `packageReplaced: Boolean = false` to `upsertPreservingSnapshotAndGen`.
+  - Transitions `SUPERSEDED`, `FAILED_PERMANENT`, and `FAILED_TRANSIENT` back to `PENDING` when `userInitiated || packageReplaced` is true on the same version code (while preserving `-1L` lock on `ROLLED_BACK_UNSAFE`).
+- In `ReconciliationCoordinator.kt`:
+  - Added `handlePackageReplaced(context: Context, pkg: String)`.
+  - In `processPending`, re-queues same-version failed ops via `upsertPreservingSnapshotAndGen(op, packageReplaced = true)`.
+- In `PackageChangeReceiver.kt`:
+  - Invokes `ReconciliationCoordinator.handlePackageReplaced(context, pkg)` upon receiving `ACTION_PACKAGE_REPLACED`.
 
 ---
 
-## 3. Outbound Network & Privacy Audit
+## 2. Unit Test Results
 
-| Endpoint | Protocol | Payload Fields | Privacy Guardrails & Telemetry Controls |
-|---|---|---|---|
-| `https://cloudflare-dns.com/cdn-cgi/trace` | HTTPS | None; `Connection: close`; generic `User-Agent: PrivacyGuard/1.0`; zero cookies. | Active dual-socket probe only (VPN vs physical network) to detect egress leaks and verify Private DNS/WARP. |
-| `app-measurement.com` | DNS Query | `InetAddress.getAllByName` lookup only. | Canary DNS sinkhole probe only; zero HTTP/TCP connections. Gated behind active network check and secondary resolver check. |
-| `http://127.0.0.1:11434/api/generate` | HTTP | JSON: `{ "model": "llama3.2", "prompt": "<stripped app metadata>", "format": "json" }` | Local loopback Ollama LAN only.<br>- Gate 1: Pinned certs for Google, Mozilla, F-Droid skipped without network.<br>- Gate 2: Sensitive category denylist never touches network.<br>- Gate 3: Capped at 5 attempts; decoy benign hashes ($k=4$) for k-anonymity. |
-
-Zero personal identifiers (device IDs, advertising IDs, account tokens, Wi-Fi SSIDs, or telemetry) ever leave the device.
-
----
-
-## 4. Release Build & On-Device Verification
-
-### 1. Release Unit Tests
-Command: `.\gradlew.bat testReleaseUnitTest --stacktrace`
+### `testDebugUnitTest` Output
+Command: `.\gradlew.bat testDebugUnitTest`
 ```text
-> Task :app:testReleaseUnitTest
-BUILD SUCCESSFUL in 28s
-30 actionable tasks: 9 executed, 21 up-to-date
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL in 12s
+29 actionable tasks: 4 executed, 25 up-to-date
 ```
-- Total test count: 15 passed, 0 failed.
-- Tested: `Ed25519VerifierTest`, `LightGbmParityTest`, `ShizukuShellServiceTest`, `CrashWatchdogParsingTest`.
 
-### 2. Release APK Build (R8 Full Mode & Resource Shrinking)
-Command: `.\gradlew.bat assembleRelease --stacktrace`
-```text
-> Task :app:minifyReleaseWithR8
-> Task :app:shrinkReleaseRes
-> Task :app:packageRelease
-> Task :app:assembleRelease
-BUILD SUCCESSFUL in 1m 6s
-58 actionable tasks: 11 executed, 47 up-to-date
-```
-Output artifact: `android/app/build/outputs/apk/release/app-release.apk`
+### Exact Pass/Fail Breakdown
+| Test Suite | Total Tests | Passed | Failed | Errors | Skipped |
+|---|---|---|---|---|---|
+| `Ed25519VerifierTest` | 4 | 4 | 0 | 0 | 0 |
+| `LightGbmParityTest` | 1 | 1 | 0 | 0 | 0 |
+| `ShizukuShellServiceTest` | 12 | 12 | 0 | 0 | 0 |
+| `CrashWatchdogParsingTest` | 8 | 8 | 0 | 0 | 0 |
+| **Total** | **25** | **25** | **0** | **0** | **0** |
 
-### 3. 16 KB Page Alignment Verification (Android 15+ Invariant)
-Command: `zipalign -c -P 16 -v 4 android/app/build/outputs/apk/release/app-release.apk`
-```text
-Verifying alignment of android/app/build/outputs/apk/release/app-release.apk (4)...
- 2719744 lib/arm64-v8a/libandroidx.graphics.path.so (OK)
- 2736128 lib/arm64-v8a/libprivacyguard_scan.so (OK)
-...
-Verification succesful
-```
-Offset check: `2736128 % 16384 = 0` (clean 16 KB alignment).
-
-### 4. ELF Program Headers Alignment Verification
-Command: `llvm-readobj -l android/app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/arm64-v8a/libprivacyguard_scan.so`
-```text
-ProgramHeaders [
-  ProgramHeader {
-    Type: PT_LOAD (0x1)
-    Alignment: 16384
-  }
-  ProgramHeader {
-    Type: PT_LOAD (0x1)
-    Alignment: 16384
-  }
-  ProgramHeader {
-    Type: PT_LOAD (0x1)
-    Alignment: 16384
-  }
-  ProgramHeader {
-    Type: PT_LOAD (0x1)
-    Alignment: 16384
-  }
-]
-```
-All ELF `PT_LOAD` segments strictly enforce 16,384 bytes alignment.
+### Compiler Warnings Report
+- Deprecation warning on API 34 ConnectivityManager API:
+  `w: .../ShieldProbe.kt:80:42 'val allNetworks: (Array<Network!>..Array<out Network!>)' is deprecated. Deprecated in Java.`
+  (This is an expected standard Android SDK deprecation note on `allNetworks`; no compiler errors).
+- Zero other compiler warnings or errors.
+- Schema version maintained at v3 with zero entity column modifications.
+- Native C++ files untouched.

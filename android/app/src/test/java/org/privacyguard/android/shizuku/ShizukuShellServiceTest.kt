@@ -66,7 +66,12 @@ class ShizukuShellServiceTest {
         val error = ShizukuShellService.validateCommand(
             arrayOf("pm", "disable-user", "--user", "0", "com.example/")
         )
-        assertTrue(error!!.contains("Invalid component argument"))
+        assertTrue(error!!.contains("Invalid component-only pm syntax"))
+
+        val errorNonPm = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "--uid", "0", "com.example/", "ignore")
+        )
+        assertTrue(errorNonPm!!.contains("Invalid component argument"))
     }
 
     @Test
@@ -75,5 +80,21 @@ class ShizukuShellServiceTest {
             arrayOf("pm", "disable-user", "--user", "0", "com.example.app/com.example.app.MyReceiver")
         )
         assertNull(error)
+    }
+
+    @Test
+    fun `test pm disable-user without component slash rejected`() {
+        val error = ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable-user", "--user", "0", "com.example.app")
+        )
+        assertTrue(error!!.contains("Invalid component-only pm syntax"))
+    }
+
+    @Test
+    fun `test pm disable missing user argument rejected`() {
+        val error = ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable", "com.example.app/com.example.MyReceiver")
+        )
+        assertTrue(error!!.contains("Invalid component-only pm syntax"))
     }
 }

@@ -5,10 +5,11 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.provider.Settings
-import java.net.HttpURLConnection
+import java.io.IOException
 import java.net.InetAddress
 import java.net.URL
 import java.net.UnknownHostException
+import javax.net.ssl.HttpsURLConnection
 
 enum class TunnelStatus {
     HEALTHY,
@@ -31,10 +32,9 @@ data class ShieldTelemetry(
 
 object ShieldProbe {
 
-    private const val CLOUDFLARE_TRACE_URL = "https://cloudflare-dns.com/cdn-cgi/trace"
+    private const val IPV4_TRACE_URL = "https://1.1.1.1/cdn-cgi/trace"
+    private const val IPV6_TRACE_URL = "https://[2606:4700:4700::1111]/cdn-cgi/trace"
     private const val CANARY_TRACKER_HOST = "app-measurement.com"
-    private const val CONNECT_TIMEOUT_MS = 5000
-    private const val READ_TIMEOUT_MS = 5000
 
     /**
      * Executes passive telemetry and active dual-socket probes.
@@ -57,21 +57,22 @@ object ShieldProbe {
         val privateDnsServerName = lp?.privateDnsServerName
 
         val isVpnActive = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-        val isAlwaysOnLockdown = try {
+        val isAlwaysOnLockdown = runCatching {
             Settings.Secure.getInt(cr, "always_on_vpn_lockdown", 0) == 1
-        } catch (_: Throwable) {
-            false
-        }
+        }.getOrDefault(false)
 
         // 1. Canary DNS Sinkhole Probe (verifies if tracking canary domain is sinkholed)
         val isSinkholeActive = probeCanarySinkhole()
 
-        // 2. Dual-Socket Cloudflare Trace Probe
-        val activeTrace = fetchTrace(activeNetwork)
+        // 2. Dual-Socket Cloudflare Trace Probe (IPv4 & IPv6)
+        val vpnIpv4 = probeTraceIp(activeNetwork, IPV4_TRACE_URL)
+        val vpnIpv6 = probeTraceIp(activeNetwork, IPV6_TRACE_URL)
+        val egressIp = vpnIpv4 ?: vpnIpv6
+        val warpStatus = probeTraceWarp(activeNetwork, IPV4_TRACE_URL) ?: "off"
 
         val tunnelStatus: TunnelStatus
         if (isVpnActive) {
-            if (activeTrace == null) {
+            if (vpnIpv4 == null && vpnIpv6 == null) {
                 // VPN transport is up but active HTTP socket times out
                 tunnelStatus = TunnelStatus.STALLED
             } else {
@@ -88,12 +89,17 @@ object ShieldProbe {
                 }
 
                 if (physicalNetwork != null) {
-                    val physicalTrace = fetchTrace(physicalNetwork)
-                    if (physicalTrace != null && physicalTrace.ip != null && physicalTrace.ip == activeTrace.ip) {
-                        // Equal egress IPs between VPN and physical network indicates a tunnel leak
-                        tunnelStatus = TunnelStatus.LEAKING
+                    val physIpv4 = probeTraceIp(physicalNetwork, IPV4_TRACE_URL)
+                    val physIpv6 = probeTraceIp(physicalNetwork, IPV6_TRACE_URL)
+
+                    val v4Leak = vpnIpv4 != null && physIpv4 != null && vpnIpv4 == physIpv4
+                    val v6Leak = vpnIpv6 != null && physIpv6 != null && vpnIpv6 == physIpv6
+                    val isLeaking = v4Leak || v6Leak
+
+                    tunnelStatus = if (isLeaking) {
+                        TunnelStatus.LEAKING
                     } else {
-                        tunnelStatus = TunnelStatus.HEALTHY
+                        TunnelStatus.HEALTHY
                     }
                 } else {
                     tunnelStatus = TunnelStatus.HEALTHY
@@ -109,8 +115,8 @@ object ShieldProbe {
             isVpnActive = isVpnActive,
             isAlwaysOnLockdown = isAlwaysOnLockdown,
             isSinkholeActive = isSinkholeActive,
-            egressIp = activeTrace?.ip,
-            warpStatus = activeTrace?.warp ?: "off",
+            egressIp = egressIp,
+            warpStatus = warpStatus,
             tunnelStatus = tunnelStatus
         )
     }
@@ -140,20 +146,62 @@ object ShieldProbe {
         }
     }
 
-    private fun fetchTrace(network: Network): CloudflareTrace? {
-        var conn: HttpURLConnection? = null
+    internal fun probeTraceIp(network: Network, urlString: String): String? {
+        var conn: HttpsURLConnection? = null
         return try {
-            val url = URL(CLOUDFLARE_TRACE_URL)
-            conn = network.openConnection(url) as HttpURLConnection
-            conn.connectTimeout = CONNECT_TIMEOUT_MS
-            conn.readTimeout = READ_TIMEOUT_MS
-            conn.instanceFollowRedirects = false
+            val url = URL(urlString)
+            conn = network.openConnection(url) as HttpsURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.useCaches = false
             conn.setRequestProperty("User-Agent", "PrivacyGuard/1.0")
             conn.setRequestProperty("Connection", "close")
 
             if (conn.responseCode == 200) {
-                val content = conn.inputStream.bufferedReader().use { it.readText() }
-                parseTrace(content)
+                conn.inputStream.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        if (line.startsWith("ip=")) {
+                            return@useLines line.substringAfter("ip=").trim().ifBlank { null }
+                        }
+                    }
+                    null
+                }
+            } else {
+                null
+            }
+        } catch (_: IOException) {
+            null
+        } catch (_: RuntimeException) {
+            null
+        } catch (_: Throwable) {
+            null
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    internal fun probeTraceWarp(network: Network, urlString: String): String? {
+        var conn: HttpsURLConnection? = null
+        return try {
+            val url = URL(urlString)
+            conn = network.openConnection(url) as HttpsURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.useCaches = false
+            conn.setRequestProperty("User-Agent", "PrivacyGuard/1.0")
+            conn.setRequestProperty("Connection", "close")
+
+            if (conn.responseCode == 200) {
+                conn.inputStream.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        if (line.startsWith("warp=")) {
+                            return@useLines line.substringAfter("warp=").trim().ifBlank { null }
+                        }
+                    }
+                    null
+                }
             } else {
                 null
             }
@@ -164,24 +212,6 @@ object ShieldProbe {
                 conn?.disconnect()
             } catch (_: Throwable) {}
         }
-    }
-
-    private fun parseTrace(raw: String): CloudflareTrace {
-        var ip: String? = null
-        var warp = "off"
-        var dns = "off"
-
-        raw.lineSequence().forEach { line ->
-            val parts = line.split("=", limit = 2)
-            if (parts.size == 2) {
-                when (parts[0].trim()) {
-                    "ip" -> ip = parts[1].trim()
-                    "warp" -> warp = parts[1].trim()
-                    "dns" -> dns = parts[1].trim()
-                }
-            }
-        }
-        return CloudflareTrace(ip = ip, warp = warp, dns = dns)
     }
 
     private fun fallbackTelemetry(): ShieldTelemetry {
@@ -196,10 +226,4 @@ object ShieldProbe {
             tunnelStatus = TunnelStatus.DISCONNECTED
         )
     }
-
-    private data class CloudflareTrace(
-        val ip: String? = null,
-        val warp: String = "off",
-        val dns: String = "off"
-    )
 }

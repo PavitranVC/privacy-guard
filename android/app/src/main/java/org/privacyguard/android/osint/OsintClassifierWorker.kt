@@ -51,7 +51,7 @@ class OsintClassifierWorker(
                     continue
                 }
 
-                // Gate 3: k-Anonymity with Decoy Popular Hashes over Local LAN Ollama
+                // Gate 3: Local LAN Ollama Classification
                 val dangerousPerms: List<String> = try {
                     json.decodeFromString(ListSerializer(String.serializer()), item.dangerousPermissionsJson)
                 } catch (_: Throwable) {
@@ -113,11 +113,10 @@ class OsintClassifierWorker(
         const val VERDICT_CLEAN_TRUSTED_PUBLISHER = "CLEAN_TRUSTED_PUBLISHER"
         const val VERDICT_EXCLUDED_SENSITIVE = "EXCLUDED_SENSITIVE_CATEGORY"
 
-        // Pinned SHA-256 fingerprints of trusted publishers (Google Play, F-Droid, Mozilla)
+        // Pinned SHA-256 fingerprint of verified trusted publisher (Google Play Services)
+        // Note: additional publisher cert pins require verified production captures
         private val TRUSTED_PUBLISHER_CERTS = setOf(
-            "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83", // Google Play Services
-            "a702842117291261a3ce13024d028f2e3f6077a1e425a83e9292c198f8fcf7eb", // F-Droid
-            "800e7956a4a5861423b3f5150949179e49fb30421255a3d08e62e04e2dd04780"  // Mozilla
+            "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83" // Google Play Services
         )
 
         // Sensitive domain keywords subject to strict zero-network transmission
@@ -130,14 +129,6 @@ class OsintClassifierWorker(
             "vpn", "tor", "orbot", "proxy", "wireguard", "openvpn",
             "password", "bitwarden", "1password", "keepass", "authenticator",
             "stalker"
-        )
-
-        // Decoy popular benign hashes for k-anonymity (k = 4)
-        val DECOY_POPULAR_HASHES = listOf(
-            "4a4e12e75dc9e3557e0fa80cb51ec72b47d3326177114b0b1442c5ccb480b85a", // VLC Android
-            "bf7a3c3f9a7c36a3e6f98efdb0a1ad909fb58d20e74b5c7774e64f7bdf756fb2", // Signal
-            "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", // DuckDuckGo
-            "11a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"  // OpenVPN
         )
 
         fun enqueue(context: Context) {

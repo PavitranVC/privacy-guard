@@ -150,6 +150,13 @@ class ShizukuShellService : IShellService.Stub() {
                 }
             }
 
+            // Enforce strict component-only pm command syntax
+            if (binary == "pm" && subcmd in setOf("enable", "disable", "disable-user", "default-state")) {
+                if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it.isDigit() } || !COMPONENT_REGEX.matches(cmd[4])) {
+                    return "Invalid component-only pm syntax: expected 'pm $subcmd --user <id> <pkg/component>', got: ${cmd.joinToString(" ")}"
+                }
+            }
+
             // Validate package, component, and keyword arguments
             for (i in 2 until cmd.size) {
                 val arg = cmd[i]

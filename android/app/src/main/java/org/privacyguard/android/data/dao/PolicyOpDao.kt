@@ -161,6 +161,16 @@ interface PolicyOpDao {
 
     @Query("""
         UPDATE policy_op
+        SET status = 'SUPERSEDED',
+            errClass = 'UNLOCKED_BY_USER',
+            nextAt = 0,
+            gen = gen + 1
+        WHERE pkg = :pkg AND op = :opType AND status = 'ROLLED_BACK_UNSAFE' AND :now = :now
+    """)
+    suspend fun unlockRolledBackUnsafe(pkg: String, opType: String, now: Long = System.currentTimeMillis()): Int
+
+    @Query("""
+        UPDATE policy_op
         SET versionCode = :versionCode,
             lastUpdateTime = :lastUpdateTime,
             status = 'PENDING',
@@ -172,7 +182,11 @@ interface PolicyOpDao {
     suspend fun resetForNewVersion(id: Long, versionCode: Long, lastUpdateTime: Long): Int
 
     @Transaction
-    suspend fun upsertPreservingSnapshotAndGen(op: PolicyOp, userInitiated: Boolean = false): Long {
+    suspend fun upsertPreservingSnapshotAndGen(
+        op: PolicyOp,
+        userInitiated: Boolean = false,
+        packageReplaced: Boolean = false
+    ): Long {
         if (countLocked(op.pkg, op.op) > 0) {
             return -1L
         }
@@ -193,7 +207,7 @@ interface PolicyOpDao {
             )
         ) {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
-        } else if (!versionChanged && userInitiated &&
+        } else if (!versionChanged && (userInitiated || packageReplaced) &&
             existing.status in setOf(
                 PolicyOp.STATUS_SUPERSEDED,
                 PolicyOp.STATUS_FAILED_PERMANENT,

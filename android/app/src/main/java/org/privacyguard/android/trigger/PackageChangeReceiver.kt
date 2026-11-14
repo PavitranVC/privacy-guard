@@ -21,10 +21,14 @@ class PackageChangeReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = AppDatabase.getInstance(context)
-                val now = System.currentTimeMillis()
-                db.reconcileRequestDao().upsertRequestWithSeq(pkg, now, now)
-                ReconciliationCoordinator.scheduleDrainWork(context)
+                if (action == Intent.ACTION_PACKAGE_REPLACED) {
+                    ReconciliationCoordinator.handlePackageReplaced(context, pkg)
+                } else {
+                    val db = AppDatabase.getInstance(context)
+                    val now = System.currentTimeMillis()
+                    db.reconcileRequestDao().upsertRequestWithSeq(pkg, now, now)
+                    ReconciliationCoordinator.scheduleDrainWork(context)
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed recording reconcile request", t)
             } finally {

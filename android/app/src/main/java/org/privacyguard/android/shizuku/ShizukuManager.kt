@@ -365,6 +365,10 @@ class ShizukuManager private constructor(private val appContext: Context) {
         var overallSuccess = true
         for (op in opsToRollback) {
             if (op.snapshot.isNullOrBlank() || op.snapshot == "{}") {
+                if (op.status == PolicyOp.STATUS_PENDING) {
+                    db.policyOpDao().markSuperseded(op.id, op.gen)
+                    continue
+                }
                 if (op.op == "isolate_wifi") {
                     try {
                         val r1 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))

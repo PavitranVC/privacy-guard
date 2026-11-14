@@ -338,7 +338,11 @@ class PrivacyGuardViewModel(
                 nextAt = now
             )
 
-            database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
+            val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
+            if (opId == -1L) {
+                _statusMessage.value = "Operation locked: $pkg previously crashed when components were disabled (ROLLED_BACK_UNSAFE). Unlock before retrying."
+                return@launch
+            }
             _statusMessage.value = "Queued component disable for ${targetComponents.size} tracker components"
             shizukuManager.drainRunnableOps()
         }
@@ -373,9 +377,31 @@ class PrivacyGuardViewModel(
                 nextAt = now
             )
 
-            database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
+            val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
+            if (opId == -1L) {
+                _statusMessage.value = "Operation locked: $pkg previously crashed under network isolation (ROLLED_BACK_UNSAFE). Unlock before retrying."
+                return@launch
+            }
             _statusMessage.value = "Queued background network restrictions for $pkg"
             shizukuManager.drainRunnableOps()
+        }
+    }
+
+    /**
+     * Unlocks a previously crash-rolled-back op (ROLLED_BACK_UNSAFE) and immediately retries it.
+     */
+    fun unlockAndRetryPolicyOp(pkg: String, opType: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val unlocked = database.policyOpDao().unlockRolledBackUnsafe(pkg, opType)
+            if (unlocked > 0) {
+                _statusMessage.value = "Unlocked previously crashing operation for $pkg. Retrying..."
+                when (opType) {
+                    ShellOps.OP_DISABLE_COMPONENTS -> disableTrackerComponents(pkg)
+                    ShellOps.OP_ISOLATE_WIFI -> restrictBackgroundNetworking(pkg)
+                }
+            } else {
+                _statusMessage.value = "No locked unsafe operation found to unlock for $pkg"
+            }
         }
     }
 

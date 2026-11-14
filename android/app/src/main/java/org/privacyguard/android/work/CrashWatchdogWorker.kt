@@ -23,8 +23,6 @@ class CrashWatchdogWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        if (runAttemptCount >= 5) return Result.failure()
-
         val policyOpId = inputData.getLong(KEY_POLICY_OP_ID, -1L)
         val appliedAt = inputData.getLong(KEY_APPLIED_AT, -1L)
 
@@ -38,8 +36,25 @@ class CrashWatchdogWorker(
             return Result.success()
         }
 
+        if (runAttemptCount >= 5) {
+            val freshOp = db.policyOpDao().getById(policyOpId)
+            if (freshOp != null && (freshOp.status == PolicyOp.STATUS_APPLIED || freshOp.status == PolicyOp.STATUS_APPLIED_PARTIAL)) {
+                Log.w(TAG, "Watchdog retries exhausted for ${freshOp.pkg}. Transitioning to DRIFT.")
+                db.policyOpDao().markDriftPending(freshOp.id, freshOp.gen)
+            }
+            return Result.failure()
+        }
+
         val shizuku = ShizukuManager.getInstance(applicationContext)
         if (!shizuku.isReady()) {
+            if (runAttemptCount >= 4) {
+                val freshOp = db.policyOpDao().getById(policyOpId)
+                if (freshOp != null && (freshOp.status == PolicyOp.STATUS_APPLIED || freshOp.status == PolicyOp.STATUS_APPLIED_PARTIAL)) {
+                    Log.w(TAG, "Watchdog retries exhausted while Shizuku unready for ${freshOp.pkg}. Transitioning to DRIFT.")
+                    db.policyOpDao().markDriftPending(freshOp.id, freshOp.gen)
+                }
+                return Result.failure()
+            }
             return Result.retry()
         }
 
@@ -48,35 +63,19 @@ class CrashWatchdogWorker(
             shizuku.exec(arrayOf("dumpsys", "activity", "exit-info", op.pkg))
         }
 
-        var crashDetected = false
-        val dumpsysOut = dumpsysResult.stdout
-
-        if (dumpsysResult.exitCode == 0 && dumpsysOut.isNotBlank()) {
-            // Split into individual ApplicationExitInfo blocks
-            val blocks = dumpsysOut.split("ApplicationExitInfo #")
-            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-            val reasonRegex = Regex("""(?<![A-Za-z])reason=([4-7])\b""") // 4=CRASH, 5=CRASH_NATIVE, 6=ANR, 7=INITIALIZATION_FAILURE
-
-            for (block in blocks) {
-                if (!reasonRegex.containsMatchIn(block)) continue
-
-                val tsMatch = Regex("""timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})""").find(block)
-                val timestamp = if (tsMatch != null) {
-                    try {
-                        sdf.parse(tsMatch.groupValues[1])?.time
-                    } catch (_: Throwable) {
-                        null
-                    }
-                } else {
-                    Regex("""timestamp=(\d{10,13})\b""").find(block)?.groupValues?.get(1)?.toLongOrNull()
+        if (dumpsysResult.exitCode != 0) {
+            if (runAttemptCount >= 4) {
+                val freshOp = db.policyOpDao().getById(policyOpId)
+                if (freshOp != null && (freshOp.status == PolicyOp.STATUS_APPLIED || freshOp.status == PolicyOp.STATUS_APPLIED_PARTIAL)) {
+                    Log.w(TAG, "Watchdog retries exhausted on dumpsys error for ${freshOp.pkg}. Transitioning to DRIFT.")
+                    db.policyOpDao().markDriftPending(freshOp.id, freshOp.gen)
                 }
-
-                if (timestamp != null && timestamp in appliedAt..(appliedAt + 60_000L)) {
-                    crashDetected = true
-                    break
-                }
+                return Result.failure()
             }
+            return Result.retry()
         }
+
+        val crashDetected = hasCrashInWindow(dumpsysResult.stdout, appliedAt, 60_000L)
 
         if (crashDetected) {
             Log.w(TAG, "Process crash detected within 60s window for ${op.pkg}. Initiating rollback.")
@@ -143,5 +142,36 @@ class CrashWatchdogWorker(
         private const val TAG = "CrashWatchdogWorker"
         const val KEY_POLICY_OP_ID = "policy_op_id"
         const val KEY_APPLIED_AT = "applied_at"
+
+        internal fun hasCrashInWindow(
+            dumpsysOutput: String,
+            appliedAtMs: Long,
+            windowMs: Long = 60_000L
+        ): Boolean {
+            if (dumpsysOutput.isBlank()) return false
+            val blocks = dumpsysOutput.split("ApplicationExitInfo #")
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+            val reasonRegex = Regex("""(?<![A-Za-z])reason=([4-7])\b""") // 4=CRASH, 5=CRASH_NATIVE, 6=ANR, 7=INITIALIZATION_FAILURE
+
+            for (block in blocks) {
+                if (!reasonRegex.containsMatchIn(block)) continue
+
+                val tsMatch = Regex("""timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})""").find(block)
+                val timestamp = if (tsMatch != null) {
+                    try {
+                        sdf.parse(tsMatch.groupValues[1])?.time
+                    } catch (_: Throwable) {
+                        null
+                    }
+                } else {
+                    Regex("""timestamp=(\d{10,13})\b""").find(block)?.groupValues?.get(1)?.toLongOrNull()
+                }
+
+                if (timestamp != null && timestamp in appliedAtMs..(appliedAtMs + windowMs)) {
+                    return true
+                }
+            }
+            return false
+        }
     }
 }

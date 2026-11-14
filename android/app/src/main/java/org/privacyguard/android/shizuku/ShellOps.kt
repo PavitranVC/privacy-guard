@@ -24,11 +24,44 @@ object ShellOps {
 
     private const val TAG = "ShellOps"
 
-    private val CRITICAL_PACKAGES = setOf(
+    private val CORE_PROTECTED_PACKAGES = setOf(
+        "org.privacyguard.android",
+        "moe.shizuku.privileged.api",
         "com.google.android.gms",
+        "com.google.android.gsf",
         "com.android.vending",
-        "com.google.android.gsf"
+        "android",
+        "com.android.systemui",
+        "com.android.settings",
+        "com.android.phone",
+        "com.android.mms.service",
+        "com.android.incallui",
+        "com.google.android.dialer",
+        "com.google.android.apps.messaging",
+        "net.one97.paytm",
+        "com.phonepe.app",
+        "com.google.android.apps.nbu.paisa.user",
+        "in.org.npci.upiapp",
+        "in.amazon.mShop.android.shopping",
+        "com.whatsapp",
+        "com.csam.icici.bank.imobile",
+        "com.sbi.lotusintouch",
+        "com.axis.mobile",
+        "com.snapwork.hdfc"
     )
+
+    fun isCoreProtectedPackage(packageName: String): Boolean {
+        return CORE_PROTECTED_PACKAGES.contains(packageName)
+    }
+
+    fun isSystemApp(context: Context, pkg: String): Boolean {
+        return try {
+            val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
+            (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
 
     private val PROTECTED_INITIALIZERS = setOf(
         "androidx.startup.InitializationProvider",
@@ -53,16 +86,7 @@ object ShellOps {
 
     fun isSafeListed(context: Context, pkg: String, componentName: String? = null): Boolean {
         if (pkg == context.packageName) return true
-        if (CRITICAL_PACKAGES.contains(pkg)) return true
-
-        try {
-            val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
-            if ((appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) {
-                return true
-            }
-        } catch (_: PackageManager.NameNotFoundException) {
-            return false
-        }
+        if (isCoreProtectedPackage(pkg) || isSystemApp(context, pkg)) return true
 
         if (componentName != null) {
             val simpleName = componentName.substringAfterLast('.')
