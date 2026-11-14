@@ -297,6 +297,7 @@ private fun ShieldTelemetrySection(
                     TunnelStatus.STALLED -> "STALLED TUNNEL" to Color(0xFFC62828)
                     TunnelStatus.DISCONNECTED -> "Disconnected" to Color(0xFF757575)
                     TunnelStatus.NO_VPN -> "Direct Connection" to Color(0xFF757575)
+                    TunnelStatus.INCONCLUSIVE -> "VPN Active (Leak Check Inconclusive)" to Color(0xFFEF6C00)
                 }
                 Text(
                     text = tunnelText,

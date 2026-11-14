@@ -149,18 +149,20 @@ object Tier1AScanner {
     private fun extractSigningCertSha256(pkgInfo: PackageInfo): String {
         val signingInfo = pkgInfo.signingInfo ?: return ""
         val signers = if (signingInfo.hasMultipleSigners()) {
-            signingInfo.apkContentsSigners
+            signingInfo.apkContentsSigners?.toList() ?: emptyList()
         } else {
-            signingInfo.signingCertificateHistory
+            val contents = signingInfo.apkContentsSigners?.toList() ?: emptyList()
+            val history = signingInfo.signingCertificateHistory?.toList() ?: emptyList()
+            contents + history
         }
 
-        if (signers.isNullOrEmpty()) return ""
+        if (signers.isEmpty()) return ""
 
         val hexList = signers.map { cert ->
             val md = MessageDigest.getInstance("SHA-256")
             val digest = md.digest(cert.toByteArray())
-            digest.joinToString("") { "%02x".format(it) }
-        }.sorted()
+            digest.joinToString("") { "%02x".format(it).lowercase() }
+        }.distinct().sorted()
 
         return hexList.joinToString(",")
     }

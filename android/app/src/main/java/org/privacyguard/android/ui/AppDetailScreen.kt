@@ -87,7 +87,12 @@ fun AppDetailScreen(
                 TextButton(
                     onClick = {
                         showUnlockDialog = false
-                        onUnlockAndRetry(app.pkg, ShellOps.OP_DISABLE_COMPONENTS)
+                        val lockedOps = ops.filter { it.status == PolicyOp.STATUS_ROLLED_BACK_UNSAFE }
+                        if (lockedOps.isNotEmpty()) {
+                            lockedOps.forEach { onUnlockAndRetry(app.pkg, it.op) }
+                        } else {
+                            onUnlockAndRetry(app.pkg, ShellOps.OP_DISABLE_COMPONENTS)
+                        }
                     }
                 ) {
                     Text("Unlock & Re-apply", color = MaterialTheme.colorScheme.error)

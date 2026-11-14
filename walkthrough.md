@@ -149,3 +149,51 @@ BUILD SUCCESSFUL in 12s
 - `./gradlew testReleaseUnitTest assembleRelease`: **BUILD SUCCESSFUL** (in 59s, R8 full mode, 16 KB page-aligned native libs).
 - `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).
 - Native C++ files untouched.
+
+---
+
+# Walkthrough: Milestone M3.5-B — UPI Protection, Debloat Gate, ShieldProbe Single-Pass, Lineage Certs, & Real Moto G54 Golden Fixtures
+
+## 1. Files Created/Modified
+
+1. `android/app/src/main/java/org/privacyguard/android/data/dao/PolicyOpDao.kt`
+   - In `upsertPreservingSnapshotAndGen`: on `versionChanged`, if `userInitiated || packageReplaced`, resets ops in `STATUS_FAILED_PERMANENT` and `STATUS_FAILED_TRANSIENT` alongside superseded/applied/drift; changed final fallthrough to return `0L` (preventing false `> 0L` queue reporting on unmodified rows).
+2. `android/app/src/main/java/org/privacyguard/android/ui/AppDetailScreen.kt`
+   - In `AlertDialog` confirm button: finds all ops in `ops` with `STATUS_ROLLED_BACK_UNSAFE` and invokes `onUnlockAndRetry(app.pkg, it.op)` for each (falling back to `OP_DISABLE_COMPONENTS`).
+3. `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`
+   - Added `isDynamicUpiOrPaymentApp(context, pkg)`: dynamically queries `ACTION_VIEW` for `upi://pay` to protect any installed UPI application from mutations.
+   - Added `isProtectedForDebloat(context, pkg)`: gates debloat actions while permitting OEM system bloat disabling by protecting core packages, UPI apps, home/launcher, SMS, dialer, WebView, and non-updated Android system packages.
+   - Preserved `isSafeListed(context, pkg, componentName: String? = null)` signature and added `isDynamicUpiOrPaymentApp(context, pkg)` check.
+4. `android/app/src/main/java/org/privacyguard/android/shield/ShieldProbe.kt`
+   - Added `TunnelStatus.INCONCLUSIVE`.
+   - Refactored dual-socket trace probing to single-pass `TraceResponse(val ip: String?, val warp: String?)` via `probeTrace(network, url)`, parsing `ip=` and `warp=` in a single HTTP request and eliminating redundant calls.
+   - When VPN is active, only reports `TunnelStatus.HEALTHY` if a comparable physical network family probe exists and does not match; if physical probes are unavailable/timed out, reports `TunnelStatus.INCONCLUSIVE`.
+5. `android/app/src/main/java/org/privacyguard/android/ui/DashboardCard.kt`
+   - Handled `TunnelStatus.INCONCLUSIVE` displaying `"VPN Active (Leak Check Inconclusive)"` with amber warning color `Color(0xFFEF6C00)`.
+6. `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`
+   - Added Google Play Services APK Signature Scheme v3 rotated leaf cert (`5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402`) to `TRUSTED_PUBLISHER_CERTS` alongside original root signer.
+   - Gate 1 checks comma-separated certificates against trusted publishers.
+   - In Gate 3, if Ollama is unreachable (`verdict == null`), returns `Result.retry()` (when `runAttemptCount < 4`) or `Result.failure()`.
+7. `android/app/src/main/java/org/privacyguard/android/scan/tier1a/Tier1AScanner.kt`
+   - In `extractSigningCertSha256`, hashes BOTH `apkContentsSigners` and `signingCertificateHistory` when `hasMultipleSigners()` is false, deduplicating lowercase SHA-256 digests so rotated packages match lineage or leaf.
+8. `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuShellService.kt`
+   - Replaced `Char.isDigit()` with strict ASCII digit check `it in '0'..'9'`, rejecting Unicode digits.
+9. `android/app/src/test/java/org/privacyguard/android/shizuku/ShizukuShellServiceTest.kt`
+   - Added negative tests for whole-package pm commands, non-ASCII Unicode user IDs (`٠`), combined flags (`--user=0`), and extra trailing tokens.
+10. `android/app/src/test/resources/fixtures/moto_g54_sdk35_exit_info.txt`
+    - Real Moto G54 5G (Android 15 / SDK 35) `dumpsys activity exit-info` golden fixture.
+11. `android/app/src/test/java/org/privacyguard/android/work/CrashWatchdogParsingTest.kt`
+    - Added tests verifying `hasCrashInWindow` on the real Moto G54 fixture for reason=4 (CRASH at 18:16:12) vs reason=13 (OTHER at 07:48:20) and verifying subreason=4 on same line does not trigger crash detection.
+
+## 2. Manifest, Privileges & Attack Surface
+- No permissions added.
+- Zero exported components beyond `MainActivity` and `ShizukuProvider`.
+- Stricter Shizuku shell validation (strict ASCII digits, exact 5-token `pm` commands).
+
+## 3. Outbound Network & Privacy Audit
+- Outbound network calls strictly reduced: `ShieldProbe` dual-socket probe reduced from 3 HTTP requests down to 2 (single-pass trace).
+
+## 4. Release Build & On-Device Verification
+- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (29 tests passed across all 4 suites).
+- `./gradlew assembleRelease`: **BUILD SUCCESSFUL** in 1m 5s (R8 full mode).
+- `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).

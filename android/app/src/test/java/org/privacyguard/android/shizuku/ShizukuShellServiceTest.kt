@@ -1,6 +1,7 @@
 package org.privacyguard.android.shizuku
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -24,7 +25,6 @@ class ShizukuShellServiceTest {
         val error = ShizukuShellService.validateCommand(arrayOf("cmd", "package", "uninstall", "com.example.app"))
         assertTrue(error!!.contains("Subcommand not allowed for cmd package"))
     }
-
     @Test
     fun `test allowed subcommand on cmd package accepted`() {
         val error = ShizukuShellService.validateCommand(arrayOf("cmd", "package", "help"))
@@ -121,6 +121,38 @@ class ShizukuShellServiceTest {
         // 4. PM default-state restoration
         assertNull(ShizukuShellService.validateCommand(
             arrayOf("pm", "default-state", "--user", "0", "com.example.app/com.example.app.MyReceiver")
+        ))
+    }
+
+    @Test
+    fun `test negative pm command syntax validations`() {
+        // Whole-package commands rejected
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable", "--user", "0", "com.foo.bar")
+        ))
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "enable", "--user", "0", "com.foo.bar")
+        ))
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "default-state", "--user", "0", "com.foo.bar")
+        ))
+
+        // Invalid user IDs (non-digit, Unicode non-ASCII digit)
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable-user", "--user", "abc", "com.foo.bar/com.foo.bar.Rcv")
+        ))
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable-user", "--user", "٠", "com.foo.bar/com.foo.bar.Rcv")
+        ))
+
+        // Combined flag rejected
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable-user", "--user=0", "com.foo.bar/com.foo.bar.Rcv")
+        ))
+
+        // Extra tokens (6 tokens) rejected
+        assertNotNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "disable-user", "--user", "0", "com.foo.bar/com.foo.bar.Rcv", "extra")
         ))
     }
 }

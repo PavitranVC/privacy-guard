@@ -218,14 +218,25 @@ interface PolicyOpDao {
             return 0L
         }
 
-        if (versionChanged &&
-            existing.status in listOf(
+        val allowedVersionChangedStatuses = if (userInitiated || packageReplaced) {
+            setOf(
+                PolicyOp.STATUS_SUPERSEDED,
+                PolicyOp.STATUS_APPLIED,
+                PolicyOp.STATUS_APPLIED_PARTIAL,
+                PolicyOp.STATUS_DRIFT,
+                PolicyOp.STATUS_FAILED_PERMANENT,
+                PolicyOp.STATUS_FAILED_TRANSIENT
+            )
+        } else {
+            setOf(
                 PolicyOp.STATUS_SUPERSEDED,
                 PolicyOp.STATUS_APPLIED,
                 PolicyOp.STATUS_APPLIED_PARTIAL,
                 PolicyOp.STATUS_DRIFT
             )
-        ) {
+        }
+
+        if (versionChanged && existing.status in allowedVersionChangedStatuses) {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
             return existing.id
         } else if (!versionChanged && (userInitiated || packageReplaced) &&
@@ -238,6 +249,6 @@ interface PolicyOpDao {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
             return existing.id
         }
-        return existing.id
+        return 0L
     }
 }

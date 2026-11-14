@@ -1,0 +1,20 @@
+ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)
+Last Timestamp of Persistence Into Persistent Storage: 2026-11-14 17:51:26.961
+  package: com.google.android.calculator
+    Historical Process Exit for uid=10225
+        ApplicationExitInfo #0:
+          timestamp=2026-11-14 18:16:12.540 pid=8543 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=4 (APP CRASH(EXCEPTION)) subreason=0 (UNKNOWN) status=0
+          importance=325 pss=0.00 rss=0.00 description=crash state=empty trace=null
+        ApplicationExitInfo #1:
+          timestamp=2026-11-14 07:48:20.970 pid=23749 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.calculator reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=107MB description=too many empty state=empty trace=null
+        ApplicationExitInfo #2:
+          timestamp=2026-10-28 20:06:59.246 pid=26073 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=124MB description=remove task state=empty trace=null
+        ApplicationExitInfo #3:
+          timestamp=2026-10-14 17:16:49.349 pid=27584 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
+          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null

@@ -16,7 +16,8 @@ enum class TunnelStatus {
     STALLED,
     LEAKING,
     DISCONNECTED,
-    NO_VPN
+    NO_VPN,
+    INCONCLUSIVE
 }
 
 data class ShieldTelemetry(
@@ -64,15 +65,17 @@ object ShieldProbe {
         // 1. Canary DNS Sinkhole Probe (verifies if tracking canary domain is sinkholed)
         val isSinkholeActive = probeCanarySinkhole()
 
-        // 2. Dual-Socket Cloudflare Trace Probe (IPv4 & IPv6)
-        val vpnIpv4 = probeTraceIp(activeNetwork, IPV4_TRACE_URL)
-        val vpnIpv6 = probeTraceIp(activeNetwork, IPV6_TRACE_URL)
-        val egressIp = vpnIpv4 ?: vpnIpv6
-        val warpStatus = probeTraceWarp(activeNetwork, IPV4_TRACE_URL) ?: "off"
+        // 2. Single-Pass Dual-Socket Cloudflare Trace Probe (IPv4 & IPv6)
+        val vpnTraceV4 = probeTrace(activeNetwork, IPV4_TRACE_URL)
+        val vpnTraceV6 = probeTrace(activeNetwork, IPV6_TRACE_URL)
+        val vpnV4 = vpnTraceV4?.ip
+        val vpnV6 = vpnTraceV6?.ip
+        val egressIp = vpnV4 ?: vpnV6
+        val warpStatus = vpnTraceV4?.warp ?: vpnTraceV6?.warp ?: "off"
 
         val tunnelStatus: TunnelStatus
         if (isVpnActive) {
-            if (vpnIpv4 == null && vpnIpv6 == null) {
+            if (vpnV4 == null && vpnV6 == null) {
                 // VPN transport is up but active HTTP socket times out
                 tunnelStatus = TunnelStatus.STALLED
             } else {
@@ -89,20 +92,30 @@ object ShieldProbe {
                 }
 
                 if (physicalNetwork != null) {
-                    val physIpv4 = probeTraceIp(physicalNetwork, IPV4_TRACE_URL)
-                    val physIpv6 = probeTraceIp(physicalNetwork, IPV6_TRACE_URL)
+                    val physTraceV4 = probeTrace(physicalNetwork, IPV4_TRACE_URL)
+                    val physTraceV6 = probeTrace(physicalNetwork, IPV6_TRACE_URL)
+                    val physV4 = physTraceV4?.ip
+                    val physV6 = physTraceV6?.ip
 
-                    val v4Leak = vpnIpv4 != null && physIpv4 != null && vpnIpv4 == physIpv4
-                    val v6Leak = vpnIpv6 != null && physIpv6 != null && vpnIpv6 == physIpv6
-                    val isLeaking = v4Leak || v6Leak
+                    val hasV4Comparison = vpnV4 != null && physV4 != null
+                    val hasV6Comparison = vpnV6 != null && physV6 != null
 
-                    tunnelStatus = if (isLeaking) {
-                        TunnelStatus.LEAKING
+                    if (hasV4Comparison || hasV6Comparison) {
+                        val v4Leak = hasV4Comparison && vpnV4 == physV4
+                        val v6Leak = hasV6Comparison && vpnV6 == physV6
+                        val isLeaking = v4Leak || v6Leak
+
+                        tunnelStatus = if (isLeaking) {
+                            TunnelStatus.LEAKING
+                        } else {
+                            TunnelStatus.HEALTHY
+                        }
                     } else {
-                        TunnelStatus.HEALTHY
+                        // Neither family has both non-null VPN and physical IPs to compare
+                        tunnelStatus = TunnelStatus.INCONCLUSIVE
                     }
                 } else {
-                    tunnelStatus = TunnelStatus.HEALTHY
+                    tunnelStatus = TunnelStatus.INCONCLUSIVE
                 }
             }
         } else {
@@ -146,7 +159,10 @@ object ShieldProbe {
         }
     }
 
-    internal fun probeTraceIp(network: Network, urlString: String): String? {
+    internal data class TraceResponse(val ip: String?, val warp: String?)
+
+    internal fun probeTrace(network: Network?, urlString: String): TraceResponse? {
+        if (network == null) return null
         var conn: HttpsURLConnection? = null
         return try {
             val url = URL(urlString)
@@ -158,14 +174,18 @@ object ShieldProbe {
             conn.setRequestProperty("Connection", "close")
 
             if (conn.responseCode == 200) {
+                var ip: String? = null
+                var warp: String? = null
                 conn.inputStream.bufferedReader().useLines { lines ->
                     for (line in lines) {
                         if (line.startsWith("ip=")) {
-                            return@useLines line.substringAfter("ip=").trim().ifBlank { null }
+                            ip = line.substringAfter("ip=").trim().ifBlank { null }
+                        } else if (line.startsWith("warp=")) {
+                            warp = line.substringAfter("warp=").trim().ifBlank { null }
                         }
                     }
-                    null
                 }
+                TraceResponse(ip, warp)
             } else {
                 null
             }
@@ -173,38 +193,6 @@ object ShieldProbe {
             null
         } catch (_: RuntimeException) {
             null
-        } catch (_: Throwable) {
-            null
-        } finally {
-            try {
-                conn?.disconnect()
-            } catch (_: Throwable) {}
-        }
-    }
-
-    internal fun probeTraceWarp(network: Network, urlString: String): String? {
-        var conn: HttpsURLConnection? = null
-        return try {
-            val url = URL(urlString)
-            conn = network.openConnection(url) as HttpsURLConnection
-            conn.connectTimeout = 3000
-            conn.readTimeout = 3000
-            conn.useCaches = false
-            conn.setRequestProperty("User-Agent", "PrivacyGuard/1.0")
-            conn.setRequestProperty("Connection", "close")
-
-            if (conn.responseCode == 200) {
-                conn.inputStream.bufferedReader().useLines { lines ->
-                    for (line in lines) {
-                        if (line.startsWith("warp=")) {
-                            return@useLines line.substringAfter("warp=").trim().ifBlank { null }
-                        }
-                    }
-                    null
-                }
-            } else {
-                null
-            }
         } catch (_: Throwable) {
             null
         } finally {

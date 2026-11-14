@@ -152,7 +152,7 @@ class ShizukuShellService : IShellService.Stub() {
 
             // Enforce strict component-only pm command syntax
             if (binary == "pm" && subcmd in setOf("enable", "disable", "disable-user", "default-state")) {
-                if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it.isDigit() } || !COMPONENT_REGEX.matches(cmd[4])) {
+                if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it in '0'..'9' } || !COMPONENT_REGEX.matches(cmd[4])) {
                     return "Invalid component-only pm syntax: expected 'pm $subcmd --user <id> <pkg/component>', got: ${cmd.joinToString(" ")}"
                 }
             }
@@ -165,7 +165,7 @@ class ShizukuShellService : IShellService.Stub() {
                     if (!COMPONENT_REGEX.matches(arg)) {
                         return "Invalid component argument: $arg"
                     }
-                } else if (arg.all { it.isDigit() }) {
+                } else if (arg.isNotEmpty() && arg.all { it in '0'..'9' }) {
                     continue
                 } else if (ALLOWED_KEYWORDS.contains(arg)) {
                     continue

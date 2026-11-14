@@ -76,8 +76,13 @@ class OsintClassifierWorker(
                     val finalVerdict = "${verdict.verdict}:${(verdict.confidence * 100).toInt()}"
                     db.appScanResultDao().updateOsintVerdict(item.pkg, finalVerdict)
                 } else {
-                    // Ollama offline / LAN endpoint not reachable; remain PENDING for next unmetered cycle
+                    // Ollama offline / LAN endpoint not reachable; retry via WorkManager
                     Log.w(TAG, "Ollama local LAN endpoint unreachable for ${item.pkg}")
+                    return if (runAttemptCount < 4) {
+                        Result.retry()
+                    } else {
+                        Result.failure()
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -91,14 +96,7 @@ class OsintClassifierWorker(
 
     private fun isTrustedPublisher(certSha256: String, pkg: String): Boolean {
         if (certSha256.isBlank()) return false
-        val certs = certSha256.split(",")
-        for (cert in certs) {
-            val normalized = cert.trim().lowercase()
-            if (normalized in TRUSTED_PUBLISHER_CERTS) {
-                return true
-            }
-        }
-        return false
+        return certSha256.lowercase().split(",").map { it.trim() }.any { it in TRUSTED_PUBLISHER_CERTS }
     }
 
     private fun isSensitiveCategory(pkg: String): Boolean {
@@ -113,10 +111,10 @@ class OsintClassifierWorker(
         const val VERDICT_CLEAN_TRUSTED_PUBLISHER = "CLEAN_TRUSTED_PUBLISHER"
         const val VERDICT_EXCLUDED_SENSITIVE = "EXCLUDED_SENSITIVE_CATEGORY"
 
-        // Pinned SHA-256 fingerprint of verified trusted publisher (Google Play Services)
-        // Note: additional publisher cert pins require verified production captures
+        // Pinned SHA-256 fingerprints of verified trusted publishers (Google Play Services original & v3 rotated)
         private val TRUSTED_PUBLISHER_CERTS = setOf(
-            "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83" // Google Play Services
+            "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83", // Google Play Services original signer / lineage ancestor
+            "5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402"  // Google Play Services v3 rotated leaf signer on Android 15 / SDK 35
         )
 
         // Sensitive domain keywords subject to strict zero-network transmission

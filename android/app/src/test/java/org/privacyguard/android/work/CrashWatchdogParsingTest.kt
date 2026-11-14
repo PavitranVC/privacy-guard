@@ -129,4 +129,31 @@ class CrashWatchdogParsingTest {
         // Exit #1 is in window but not a crash; Exit #2 is a crash but 30 minutes before window
         assertFalse(CrashWatchdogWorker.hasCrashInWindow(multiBlock, baseTime, 60_000L))
     }
+
+    @Test
+    fun `test real moto g54 exit info fixture crash detection`() {
+        val fixture = javaClass.classLoader!!.getResourceAsStream("fixtures/moto_g54_sdk35_exit_info.txt")!!
+            .bufferedReader().readText()
+
+        // 1. Applied at 18:16:00 covers ApplicationExitInfo #0 at 18:16:12.540 (reason=4 APP CRASH)
+        val crashAppliedAt = sdf.parse("2026-11-14 18:16:00.000")!!.time
+        assertTrue(CrashWatchdogWorker.hasCrashInWindow(fixture, crashAppliedAt, 60_000L))
+
+        // 2. Applied at 07:48:00 covers only ApplicationExitInfo #1 at 07:48:20.970 (reason=13 OTHER KILLS)
+        val benignAppliedAt = sdf.parse("2026-11-14 07:48:00.000")!!.time
+        assertFalse(CrashWatchdogWorker.hasCrashInWindow(fixture, benignAppliedAt, 60_000L))
+    }
+
+    @Test
+    fun `test subreason 4 on same line as reason 13 within window returns false`() {
+        val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
+        val sameLineDump = """
+            ApplicationExitInfo #0:
+              timestamp=2026-11-14 12:00:10.000 pid=1234
+              process=com.example.app reason=13 (OTHER KILLS BY SYSTEM) subreason=4 (ISOLATED NOT NEEDED) status=0
+        """.trimIndent()
+
+        // subreason=4 must not trigger reason=4 regex
+        assertFalse(CrashWatchdogWorker.hasCrashInWindow(sameLineDump, baseTime, 60_000L))
+    }
 }

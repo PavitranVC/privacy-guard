@@ -3,7 +3,9 @@ package org.privacyguard.android.shizuku
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.DeadObjectException
 import android.os.RemoteException
@@ -54,10 +56,54 @@ object ShellOps {
         return CORE_PROTECTED_PACKAGES.contains(packageName)
     }
 
+    fun isDynamicUpiOrPaymentApp(context: Context, pkg: String): Boolean {
+        return runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("upi://pay")).setPackage(pkg)
+            val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+            val activities = context.packageManager.queryIntentActivities(intent, flags)
+            activities.isNotEmpty()
+        }.getOrDefault(false)
+    }
+
+    fun isProtectedForDebloat(context: Context, pkg: String): Boolean {
+        if (pkg == context.packageName || isCoreProtectedPackage(pkg) || isDynamicUpiOrPaymentApp(context, pkg)) {
+            return true
+        }
+
+        return runCatching {
+            val pm = context.packageManager
+            val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+
+            // Default launcher role
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg)
+            if (pm.queryIntentActivities(homeIntent, flags).isNotEmpty()) return true
+
+            // SMS role
+            val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).setPackage(pkg)
+            if (pm.queryIntentActivities(smsIntent, flags).isNotEmpty()) return true
+
+            // Dialer role
+            val dialIntent = Intent(Intent.ACTION_DIAL).setPackage(pkg)
+            if (pm.queryIntentActivities(dialIntent, flags).isNotEmpty()) return true
+
+            // WebView or permission controller roles
+            if (pkg.contains("webview", ignoreCase = true) || pkg.contains("permissioncontroller", ignoreCase = true)) {
+                return true
+            }
+
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            val isNonUpdatedAndroid = (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0 &&
+                    (pkg.startsWith("com.android.") || pkg == "android")
+            if (isNonUpdatedAndroid) return true
+
+            false
+        }.getOrDefault(false)
+    }
+
     fun isSystemApp(context: Context, pkg: String): Boolean {
         return try {
             val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
-            (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+            (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
         } catch (_: PackageManager.NameNotFoundException) {
             false
         }
@@ -86,7 +132,7 @@ object ShellOps {
 
     fun isSafeListed(context: Context, pkg: String, componentName: String? = null): Boolean {
         if (pkg == context.packageName) return true
-        if (isCoreProtectedPackage(pkg) || isSystemApp(context, pkg)) return true
+        if (isCoreProtectedPackage(pkg) || isDynamicUpiOrPaymentApp(context, pkg) || isSystemApp(context, pkg)) return true
 
         if (componentName != null) {
             val simpleName = componentName.substringAfterLast('.')
