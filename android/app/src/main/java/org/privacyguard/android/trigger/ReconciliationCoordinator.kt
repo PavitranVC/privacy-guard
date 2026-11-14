@@ -193,8 +193,10 @@ object ReconciliationCoordinator {
                         scannedAt = now
                     )
                     db.appScanResultDao().upsert(scanResult)
+                }
 
-                    // Drift check on applied ops for package
+                // Decoupled drift check on applied ops for package (independent of Tier 1 scan)
+                try {
                     val appliedOps = db.policyOpDao().getByPackage(req.pkg)
                     for (op in appliedOps) {
                         if (op.status == PolicyOp.STATUS_APPLIED || op.status == PolicyOp.STATUS_APPLIED_PARTIAL) {
@@ -204,6 +206,8 @@ object ReconciliationCoordinator {
                             }
                         }
                     }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Error checking policy drift for ${req.pkg}", t)
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Error reconciling package ${req.pkg}", t)
