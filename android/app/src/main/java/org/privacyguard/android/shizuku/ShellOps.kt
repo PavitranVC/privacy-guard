@@ -372,27 +372,27 @@ object ShellOps {
         return protectedSet
     }
 
-    fun probeCapabilities(shellService: IShellService): List<Capability> {
+    fun probeCapabilities(backend: PrivilegeBackend): List<Capability> {
         val list = mutableListOf<Capability>()
         val fingerprint = Build.FINGERPRINT ?: "unknown"
         val now = System.currentTimeMillis()
 
         // 1. Connectivity probe
-        val connResult = shellService.exec(arrayOf("cmd", "connectivity", "help"))
+        val connResult = backend.exec(arrayOf("cmd", "connectivity", "help"))
         val connOut = connResult.stdout + " " + connResult.stderr
         val chain3Supported = connOut.contains("set-chain3-enabled", ignoreCase = true) &&
                 connOut.contains("set-package-networking-enabled", ignoreCase = true)
         list.add(Capability("connectivity_chain3", chain3Supported, fingerprint, now))
 
         // 2. AppOps probe with word boundary regex
-        val appOpsResult = shellService.exec(arrayOf("cmd", "appops", "help"))
+        val appOpsResult = backend.exec(arrayOf("cmd", "appops", "help"))
         val appOpsOut = appOpsResult.stdout + " " + appOpsResult.stderr
         val setWordRegex = Regex("\\bset\\b", RegexOption.IGNORE_CASE)
         val appOpsSupported = setWordRegex.containsMatchIn(appOpsOut)
         list.add(Capability("appops_set", appOpsSupported, fingerprint, now))
 
         // 3. PM disable-user probe
-        val pmResult = shellService.exec(arrayOf("pm", "help"))
+        val pmResult = backend.exec(arrayOf("pm", "help"))
         val pmOut = pmResult.stdout + " " + pmResult.stderr
         val pmSupported = pmOut.contains("disable-user", ignoreCase = true)
         list.add(Capability("pm_disable_user", pmSupported, fingerprint, now))
@@ -433,7 +433,7 @@ object ShellOps {
 
     suspend fun isolatePackageNetworking(
         context: Context,
-        shellService: IShellService,
+        backend: PrivilegeBackend,
         pkg: String,
         capabilityDao: CapabilityDao? = null,
         existingObserved: String? = null,
@@ -461,9 +461,9 @@ object ShellOps {
         val chain3Allowed = capabilityDao?.isSupported("connectivity_chain3", fingerprint) ?: true
         if (chain3Allowed) {
             try {
-                val rEnable = shellService.exec(arrayOf("cmd", "connectivity", "set-chain3-enabled", "true"))
+                val rEnable = backend.exec(arrayOf("cmd", "connectivity", "set-chain3-enabled", "true"))
                 checkSecurityDenial(rEnable.stderr)
-                val r1 = shellService.exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "false", pkg))
+                val r1 = backend.exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "false", pkg))
                 checkSecurityDenial(r1.stderr)
                 if (r1.exitCode == 0) {
                     return NetworkIsolationOutcome(IsolationResult.CHAIN3_SUCCESS, IsolationResult.CHAIN3_SUCCESS.statusString)
@@ -482,7 +482,7 @@ object ShellOps {
         // Ladder Step 2: Firewall chain 9 fallback via shell
         if (checkChain9Capability(capabilityDao, fingerprint)) {
             try {
-                val r2 = shellService.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
+                val r2 = backend.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
                 checkSecurityDenial(r2.stderr)
                 if (isUnknownCommand(r2.stdout, r2.stderr)) {
                     recordChain9Unsupported(capabilityDao, fingerprint)
@@ -509,9 +509,9 @@ object ShellOps {
                 reuse -> parsePriors(existingObserved)
                 isLegacy -> null // Legacy row with no suffix: do NOT read already-restricted state as prior! Record null priors.
                 else -> {
-                    val rReadBucket = shellService.exec(arrayOf("am", "get-standby-bucket", "--user", userId.toString(), pkg))
+                    val rReadBucket = backend.exec(arrayOf("am", "get-standby-bucket", "--user", userId.toString(), pkg))
                     val priorBucket = parseStandbyBucketOutput(rReadBucket.stdout)
-                    val rReadAppOps = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
+                    val rReadAppOps = backend.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
                     val priorAppOps = parseAppOpsRunAnyOutput(rReadAppOps.stdout)
                     PriorIsolationState(priorBucket, priorAppOps)
                 }
@@ -525,7 +525,7 @@ object ShellOps {
                 userId = userId,
                 pkg = pkg,
                 onPersistObserved = onPersistObserved,
-                exec = { cmd -> shellService.exec(cmd) }
+                exec = { cmd -> backend.exec(cmd) }
             )
             if (outcome != null) {
                 return outcome
@@ -640,7 +640,7 @@ object ShellOps {
 
     fun disableManifestComponents(
         context: Context,
-        shellService: IShellService,
+        backend: PrivilegeBackend,
         pkg: String,
         targetComponents: List<String>
     ) {
@@ -662,10 +662,10 @@ object ShellOps {
         try {
             for (comp in effective) {
                 val componentName = ComponentName(pkg, comp)
-                val res = shellService.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
+                val res = backend.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
                 checkSecurityDenial(res.stderr)
                 if (res.exitCode != 0) {
-                    rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                    rollbackComponents(backend, pkg, userId, mutatedSoFar)
                     mutatedSoFar.clear()
                     throw IllegalStateException("pm disable-user failed for $comp: ${res.stderr}")
                 }
@@ -675,13 +675,13 @@ object ShellOps {
                 if (observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
                     observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
                 ) {
-                    rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                    rollbackComponents(backend, pkg, userId, mutatedSoFar)
                     mutatedSoFar.clear()
                     throw IllegalStateException("Read-back verification mismatch on $comp: observed=$observedState")
                 }
             }
         } catch (t: Throwable) {
-            rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+            rollbackComponents(backend, pkg, userId, mutatedSoFar)
             mutatedSoFar.clear()
             throw t
         }
@@ -694,7 +694,7 @@ object ShellOps {
     }
 
     private fun rollbackComponents(
-        shellService: IShellService,
+        backend: PrivilegeBackend,
         pkg: String,
         userId: Int,
         components: List<String>
@@ -702,7 +702,7 @@ object ShellOps {
         for (comp in components) {
             try {
                 val componentName = ComponentName(pkg, comp)
-                val res = shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
+                val res = backend.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
                 if (res.exitCode != 0) {
                     try {
                         Log.w(TAG, "Failed to restore default-state for $comp: exit=${res.exitCode}, stderr=${res.stderr}")
@@ -716,7 +716,7 @@ object ShellOps {
         }
     }
 
-    fun killProcessSafely(shellService: IShellService, pkg: String, userId: Int): ShellResult {
-        return shellService.exec(arrayOf("am", "kill", "--user", userId.toString(), pkg))
+    fun killProcessSafely(backend: PrivilegeBackend, pkg: String, userId: Int): ShellResult {
+        return backend.exec(arrayOf("am", "kill", "--user", userId.toString(), pkg))
     }
 }

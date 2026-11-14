@@ -77,7 +77,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
                 // Probe capabilities on connect
                 val serviceRef = shellService
                 if (serviceRef != null) {
-                    val caps = ShellOps.probeCapabilities(serviceRef)
+                    val caps = ShellOps.probeCapabilities(ShizukuBackend(serviceRef))
                     val db = AppDatabase.getInstance(appContext)
                     db.capabilityDao().upsertAll(caps)
                 }
@@ -187,6 +187,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
     suspend fun executePolicyOp(opId: Long): Boolean = withContext(ioSingle) {
         if (!isReady()) return@withContext false
         val service = shellService ?: return@withContext false
+        val backend = ShizukuBackend(service)
         val db = AppDatabase.getInstance(appContext)
         val op = db.policyOpDao().getById(opId) ?: return@withContext false
 
@@ -224,7 +225,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
                 "isolate_wifi" -> {
                     val outcome = ShellOps.isolatePackageNetworking(
                         context = appContext,
-                        shellService = service,
+                        backend = backend,
                         pkg = op.pkg,
                         capabilityDao = db.capabilityDao(),
                         existingObserved = op.observed,
@@ -284,8 +285,8 @@ class ShizukuManager private constructor(private val appContext: Context) {
                     val appliedAt = System.currentTimeMillis()
                     scheduleCrashWatchdog(op.id, appliedAt)
 
-                    ShellOps.disableManifestComponents(appContext, service, op.pkg, targetComponents)
-                    ShellOps.killProcessSafely(service, op.pkg, userId)
+                    ShellOps.disableManifestComponents(appContext, backend, op.pkg, targetComponents)
+                    ShellOps.killProcessSafely(backend, op.pkg, userId)
 
                     withContext(NonCancellable) {
                         rowsUpdated = db.policyOpDao().markApplied(op.id, activeGen, "Disabled ${targetComponents.size} components")
