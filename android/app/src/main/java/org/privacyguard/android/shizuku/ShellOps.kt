@@ -60,7 +60,9 @@ object ShellOps {
     fun isDynamicUpiOrPaymentApp(context: Context, pkg: String): Boolean {
         return runCatching {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("upi://pay")).setPackage(pkg)
-            val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+            val flags = PackageManager.ResolveInfoFlags.of(
+                (PackageManager.MATCH_DEFAULT_ONLY or PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
+            )
             val activities = context.packageManager.queryIntentActivities(intent, flags)
             activities.isNotEmpty()
         }.getOrDefault(false)
