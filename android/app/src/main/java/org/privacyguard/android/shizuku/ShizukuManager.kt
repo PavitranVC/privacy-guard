@@ -426,38 +426,12 @@ class ShizukuManager private constructor(private val appContext: Context) {
                         }
                         observed.startsWith("APPOPS_STANDBY_RESTRICTED") -> {
                             val priors = ShellOps.parsePriors(observed)
-                            if (priors != null) {
-                                val targetAppOps = priors.appOpsMode
-                                val targetBucket = priors.bucket
+                            val targetAppOps = ShellOps.resolveRollbackAppOps(priors)
+                            val targetBucket = ShellOps.resolveRollbackBucket(priors)
 
-                                val appOpsReverted = if (ShellOps.isValidAppOpsMode(targetAppOps)) {
-                                    val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", targetAppOps!!))
-                                    rAppOps.exitCode == 0
-                                } else {
-                                    Log.w(TAG, "Skipping appops rollback for unknown or invalid prior mode: $targetAppOps")
-                                    false
-                                }
-
-                                val bucketReverted = if (!targetBucket.isNullOrBlank()) {
-                                    if (ShellOps.isSettableBucket(targetBucket)) {
-                                        val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, targetBucket))
-                                        rBucket.exitCode == 0
-                                    } else {
-                                        Log.w(TAG, "Skipping standby bucket rollback for non-settable value: $targetBucket")
-                                        true
-                                    }
-                                } else {
-                                    Log.w(TAG, "Skipping standby bucket rollback: prior bucket read was empty at apply time")
-                                    false
-                                }
-
-                                reverted = appOpsReverted && bucketReverted
-                            } else {
-                                // Legacy row without suffix: keep the allow/active fallback
-                                val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                                val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
-                                reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
-                            }
+                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", targetAppOps))
+                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, targetBucket))
+                            reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
                         }
                         else -> {
                             // observed blank or unrecognized: run all three, success if the appops + bucket commands exit 0

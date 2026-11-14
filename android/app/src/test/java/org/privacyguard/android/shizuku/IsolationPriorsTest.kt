@@ -181,4 +181,35 @@ class IsolationPriorsTest {
         val reformatted = ShellOps.formatIsolationResult(ShellOps.IsolationResult.APPOPS_PARTIAL, existingPriors)
         assertEquals(originalObserved, reformatted)
     }
+
+    @Test
+    fun `test resolveRollbackAppOps and resolveRollbackBucket fallbacks`() {
+        // 1. Valid priors resolve exactly
+        assertEquals("ignore", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", "ignore")))
+        assertEquals("deny", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("30", "deny")))
+        assertEquals("default", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("20", "default")))
+        assertEquals("foreground", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("10", "foreground")))
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("active", "allow")))
+
+        assertEquals("40", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("40", "ignore")))
+        assertEquals("50", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("50", "allow")))
+        assertEquals("never", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("never", "allow")))
+        assertEquals("restricted", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("restricted", "allow")))
+
+        // 2. Invalid / unknown appops mode -> falls back to "allow"
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", "garbage")))
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", "")))
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(ShellOps.PriorIsolationState("40", null)))
+
+        // 3. Unsettable / empty / unknown bucket -> falls back to "active"
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("5", "allow")))
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("exempted", "allow")))
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("garbage", "allow")))
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState("", "allow")))
+        assertEquals("active", ShellOps.resolveRollbackBucket(ShellOps.PriorIsolationState(null, "allow")))
+
+        // 4. Legacy (null priors) -> both fall back to OS defaults
+        assertEquals("allow", ShellOps.resolveRollbackAppOps(null))
+        assertEquals("active", ShellOps.resolveRollbackBucket(null))
+    }
 }

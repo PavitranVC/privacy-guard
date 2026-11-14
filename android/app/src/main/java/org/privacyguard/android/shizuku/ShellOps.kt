@@ -172,6 +172,32 @@ object ShellOps {
         return mode != null && mode.lowercase() in VALID_APPOPS_MODES
     }
 
+    fun resolveRollbackAppOps(priors: PriorIsolationState?): String {
+        return if (priors != null && isValidAppOpsMode(priors.appOpsMode)) {
+            priors.appOpsMode!!
+        } else {
+            if (priors != null && priors.appOpsMode != null) {
+                try {
+                    Log.w(TAG, "Approximate restore: restoring OS default 'allow' for unknown/invalid prior appops mode: ${priors.appOpsMode}")
+                } catch (_: Throwable) {}
+            }
+            "allow"
+        }
+    }
+
+    fun resolveRollbackBucket(priors: PriorIsolationState?): String {
+        return if (priors != null && !priors.bucket.isNullOrBlank() && isSettableBucket(priors.bucket)) {
+            priors.bucket!!
+        } else {
+            if (priors != null && priors.bucket != null) {
+                try {
+                    Log.w(TAG, "Approximate restore: restoring OS default 'active' for empty/unsettable prior bucket: ${priors.bucket}")
+                } catch (_: Throwable) {}
+            }
+            "active"
+        }
+    }
+
     fun parseAppOpsRunAnyOutput(stdout: String?): String? {
         if (stdout.isNullOrBlank()) return null
         val match = Regex("RUN_ANY_IN_BACKGROUND:\\s*([a-zA-Z]+)", RegexOption.IGNORE_CASE).find(stdout)
