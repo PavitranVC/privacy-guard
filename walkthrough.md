@@ -273,3 +273,24 @@ On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --u
 - Item 1 (437e061): In `ShellOps.isolatePackageNetworking` step 3, added `catch (e: ConcurrentMutationException) { throw e }` before `catch (e: Throwable)` so that a failed priors persistence is not swallowed as `UNISOLATABLE_ON_WIFI` and instead propagates to `executePolicyOp`'s outer transient-failure handler.
 - Item 2 (606876f): Extracted `runIsolationStep3` core taking an `exec` lambda; added unit tests proving that priors persistence strictly precedes the first mutating `cmd appops set` execution, that a failed persist aborts with zero mutating commands executed, that null persistence preserves execution, and that legacy null priors persist the suffix-less status string.
 - Item 3 (b6ae149): Case normalisation and whitespace trimming in `resolveRollbackBucket` and `resolveRollbackAppOps` so valid prior keywords (e.g. `"ACTIVE"`, `" Restricted "`, `"IGNORE"`, `"Allow"`) produce lowercase tokens matching `ALLOWED_KEYWORDS` that pass `ShizukuShellService.validateCommand`; added unit tests in `IsolationPriorsTest`.
+
+## Milestone M4-B (M1/M2 cleanup, androidTest scaffold, cache-clear probe)
+- Item 1 (`7077c2d`): Restored hidden API stack description into Section 4 of `docs/architecture.md` alongside `PrivilegeBackend`.
+- Item 2 (`d94b252`): Routed `ShizukuManager.exec(cmd)` through `ShizukuBackend(service).exec(cmd as Array<String>)`; removed unused `IShellService` import from `ShellOps.kt`.
+- Item 3 (`530e783`): Added approved androidTest dependencies to `android/gradle/libs.versions.toml` (`androidx-test-runner = "1.6.2"`, `androidx-test-ext-junit = "1.2.1"`) and `android/app/build.gradle.kts` (`androidTestImplementation`); added on-device smoke test `AppPathSmokeTest.kt` verifying target context package name is `"org.privacyguard.android"` and `Shizuku.pingBinder() == true`. Verified via manual `am instrument` run on Moto G54 hardware (`OK (2 tests)` in 0.024s), test APK uninstalled, main app and Shizuku authorization preserved intact.
+
+### Cache-clear probe on Moto G54 (Android 15)
+- **P1 (CLI support):** `pm help` lists `clear [--user USER_ID] [--cache-only] PACKAGE` (`--cache-only: a flag which tells if we only need to clear cache data`). Raw capture: `C:\Projects\_smoke_m4b\pm_help.txt`.
+- **P2 (Baseline read):** Parsed verbatim JSON arrays in `dumpsys diskstats` (`Package Names:`, `App Sizes:`, `App Data Sizes:`, `Cache Sizes:`).
+- **P3 & P5 (Clear execution):** `pm clear --cache-only --user 0 <pkg>` hangs indefinitely in `binder_wait_for_work` waiting for `obs.wait()` (PackageManagerService's `deleteApplicationCacheFilesAsUser` observer callback never fires on Android 15). Both commands timed out after 10000ms with exit code 124. Raw captures: `C:\Projects\_smoke_m4b\p3_drdriving_clear.txt`, `C:\Projects\_smoke_m4b\p5_rar_clear.txt`.
+- **P4 (Storage comparison):** App data sizes remained strictly identical before and after clearing attempts (zero app data loss).
+- **P6 (Fallback probe):** `pm trim-caches 200000000000` executed successfully (exit code 0), purging caches via `installd` across the device and freeing 10,636,664 KB (~10.14 GB) of storage (`df /data` available increased from 73,870,368 KB to 84,507,032 KB).
+- **P7 (App state preservation):** Both `com.ansangha.drdriving` and `com.rarlab.rar` were launched via `am start` post-probe; both opened cleanly with zero crashes and preserved all local user settings/state.
+
+| Target Package | Index | Code Size (bytes) | App Data Before (bytes) | App Data After (bytes) | Cache Before (bytes) | Cache After (bytes) | Clear Elapsed | Status |
+|---|---|---|---|---|---|---|---|---|
+| `com.ansangha.drdriving` | 85 | 30,680,576 | 7,163,904 | 7,163,904 | 1,196,032 | 1,196,032 | 10,013 ms | TIMEOUT (124) |
+| `com.rarlab.rar` | 246 | 8,205,824 | 1,048,576 | 1,048,576 | 184,320 | 184,320 | 10,018 ms | TIMEOUT (124) |
+
+*Data preservation:* Confirmed 100% intact (0 bytes lost across both apps).
+
