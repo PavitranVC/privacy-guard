@@ -162,7 +162,8 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
     suspend fun exec(cmd: Array<out String>): ShellResult = withContext(ioSingle) {
         val service = shellService ?: return@withContext ShellResult(-1, "", "Service not connected")
-        service.exec(cmd)
+        @Suppress("UNCHECKED_CAST")
+        ShizukuBackend(service).exec(cmd as Array<String>)
     }
 
     suspend fun drainRunnableOps() = withContext(ioSingle) {

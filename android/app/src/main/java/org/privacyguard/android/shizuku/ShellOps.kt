@@ -16,7 +16,6 @@ import kotlinx.serialization.json.Json
 import org.privacyguard.android.data.dao.CapabilityDao
 import org.privacyguard.android.data.entity.Capability
 import org.privacyguard.android.data.entity.PolicyOp
-import org.privacyguard.android.service.IShellService
 import org.privacyguard.android.service.ShellResult
 
 object ShellOps {
