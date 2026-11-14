@@ -62,7 +62,7 @@ interface PolicyOpDao {
 
     @Query("""
         UPDATE policy_op
-        SET snapshot = COALESCE(snapshot, :snapshot)
+        SET snapshot = CASE WHEN snapshot IS NULL OR snapshot = '' OR snapshot = '{}' THEN :snapshot ELSE snapshot END
         WHERE id = :id AND gen = :activeGen AND status = 'APPLYING'
     """)
     suspend fun saveSnapshot(id: Long, activeGen: Long, snapshot: String?): Int
@@ -126,13 +126,16 @@ interface PolicyOpDao {
         errClass: String?
     ): Int
 
+    @Query("SELECT COUNT(*) FROM policy_op WHERE pkg = :pkg AND op = :op AND status = 'ROLLED_BACK_UNSAFE'")
+    suspend fun countLocked(pkg: String, op: String): Int
+
     @Query("""
         UPDATE policy_op
         SET status = 'PENDING',
             gen = gen + 1,
             attempts = 0,
             nextAt = 0
-        WHERE id = :id AND gen = :expectedGen
+        WHERE id = :id AND gen = :expectedGen AND status IN ('APPLIED', 'APPLIED_PARTIAL', 'DRIFT')
     """)
     suspend fun markDriftPending(id: Long, expectedGen: Long): Int
 
@@ -164,25 +167,37 @@ interface PolicyOpDao {
             attempts = 0,
             nextAt = 0,
             gen = gen + 1
-        WHERE id = :id
+        WHERE id = :id AND status != 'ROLLED_BACK_UNSAFE'
     """)
     suspend fun resetForNewVersion(id: Long, versionCode: Long, lastUpdateTime: Long): Int
 
     @Transaction
-    suspend fun upsertPreservingSnapshotAndGen(op: PolicyOp): Long {
+    suspend fun upsertPreservingSnapshotAndGen(op: PolicyOp, userInitiated: Boolean = false): Long {
+        if (countLocked(op.pkg, op.op) > 0) {
+            return -1L
+        }
         val existing = findExisting(op.pkg, op.op, op.target)
         if (existing == null) {
             return insertIgnore(op)
         }
         if (existing.status == PolicyOp.STATUS_ROLLED_BACK_UNSAFE) {
-            return existing.id
+            return -1L
         }
-        if (existing.versionCode != op.versionCode &&
+        val versionChanged = existing.versionCode != op.versionCode
+        if (versionChanged &&
             existing.status in listOf(
                 PolicyOp.STATUS_SUPERSEDED,
                 PolicyOp.STATUS_APPLIED,
                 PolicyOp.STATUS_APPLIED_PARTIAL,
                 PolicyOp.STATUS_DRIFT
+            )
+        ) {
+            resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
+        } else if (!versionChanged && userInitiated &&
+            existing.status in setOf(
+                PolicyOp.STATUS_SUPERSEDED,
+                PolicyOp.STATUS_FAILED_PERMANENT,
+                PolicyOp.STATUS_FAILED_TRANSIENT
             )
         ) {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)

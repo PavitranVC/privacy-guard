@@ -267,6 +267,7 @@ fun AppDetailScreen(
                     // Restrict Background Networking Button
                     Button(
                         onClick = { onRestrictBackground(app.pkg) },
+                        enabled = !isProtected,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0277BD))
                     ) {

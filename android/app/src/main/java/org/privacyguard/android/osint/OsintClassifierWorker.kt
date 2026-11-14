@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -23,6 +24,8 @@ class OsintClassifierWorker(
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun doWork(): Result {
+        if (runAttemptCount >= 5) return Result.failure()
+
         val db = AppDatabase.getInstance(applicationContext)
         val pendingQueue = db.appScanResultDao().getPendingOsintQueue()
 
@@ -76,6 +79,8 @@ class OsintClassifierWorker(
                     // Ollama offline / LAN endpoint not reachable; remain PENDING for next unmetered cycle
                     Log.w(TAG, "Ollama local LAN endpoint unreachable for ${item.pkg}")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed OSINT classification for ${item.pkg}", t)
             }
@@ -108,13 +113,11 @@ class OsintClassifierWorker(
         const val VERDICT_CLEAN_TRUSTED_PUBLISHER = "CLEAN_TRUSTED_PUBLISHER"
         const val VERDICT_EXCLUDED_SENSITIVE = "EXCLUDED_SENSITIVE_CATEGORY"
 
-        // Pinned SHA-256 fingerprints of trusted publishers (Google Play, F-Droid, Mozilla, AOSP platform)
+        // Pinned SHA-256 fingerprints of trusted publishers (Google Play, F-Droid, Mozilla)
         private val TRUSTED_PUBLISHER_CERTS = setOf(
             "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83", // Google Play Services
-            "38918a453d07199354f8b19af05ec6562ced5788",                         // Google Release
             "a702842117291261a3ce13024d028f2e3f6077a1e425a83e9292c198f8fcf7eb", // F-Droid
-            "800e7956a4a5861423b3f5150949179e49fb30421255a3d08e62e04e2dd04780", // Mozilla
-            "27196e386b875e76ad700ee71583096a1ffea2552913e57fb29d073b319703e9"  // AOSP Platform Key
+            "800e7956a4a5861423b3f5150949179e49fb30421255a3d08e62e04e2dd04780"  // Mozilla
         )
 
         // Sensitive domain keywords subject to strict zero-network transmission

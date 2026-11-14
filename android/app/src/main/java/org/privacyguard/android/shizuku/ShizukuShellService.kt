@@ -15,38 +15,20 @@ class ShizukuShellService : IShellService.Stub() {
     private val pool = Executors.newCachedThreadPool()
 
     override fun exec(cmd: Array<out String>?): ShellResult {
-        if (cmd == null || cmd.isEmpty()) {
-            return ShellResult(-1, "", "Empty command")
+        val validationError = validateCommand(cmd)
+        if (validationError != null) {
+            return ShellResult(-1, "", validationError)
         }
 
-        val binary = cmd[0].removePrefix("/system/bin/")
-        val subcmd = if (cmd.size > 1) cmd[1] else ""
-
-        val pair = "$binary $subcmd".trim()
-        val isAllowed = ALLOWED_COMMAND_PREFIXES.any { pair == it || pair.startsWith("$it ") } ||
-                (ALLOWED_BINARIES.contains(binary) && (subcmd == "help" || subcmd == "--help"))
-
-        if (!isAllowed) {
-            return ShellResult(-1, "", "Command not in allowlist: $pair")
-        }
-
-        // Validate package and component arguments
-        for (i in 2 until cmd.size) {
-            val arg = cmd[i]
-            if (arg.startsWith("-")) continue
-            if (arg.contains("/")) {
-                if (!COMPONENT_REGEX.matches(arg)) {
-                    return ShellResult(-1, "", "Invalid component argument: $arg")
-                }
-            } else if (!arg.all { it.isDigit() } &&
-                       !PKG_REGEX.matches(arg) &&
-                       !ALLOWED_KEYWORDS.contains(arg)) {
-                return ShellResult(-1, "", "Invalid package or keyword argument: $arg")
-            }
+        val binary = cmd!![0].removePrefix("/system/bin/")
+        val execCmd = arrayOf("/system/bin/$binary") + cmd.drop(1)
+        val process = try {
+            ProcessBuilder(*execCmd).start()
+        } catch (e: Throwable) {
+            return ShellResult(-1, "", e.message ?: e.toString())
         }
 
         return try {
-            val process = Runtime.getRuntime().exec(cmd)
             process.outputStream.close()
 
             // Drain stdout and stderr concurrently until EOF while capping retained output at 256 KB
@@ -60,13 +42,25 @@ class ShizukuShellService : IShellService.Stub() {
                 return ShellResult(-124, partialStdout, "TIMEOUT (10s exceeded)")
             }
 
-            val stdout = stdoutFuture.get()
-            val stderr = stderrFuture.get()
+            val stdout = try {
+                stdoutFuture.get(2, TimeUnit.SECONDS)
+            } catch (_: java.util.concurrent.TimeoutException) {
+                stdoutFuture.cancel(true)
+                ""
+            }
+            val stderr = try {
+                stderrFuture.get(2, TimeUnit.SECONDS)
+            } catch (_: java.util.concurrent.TimeoutException) {
+                stderrFuture.cancel(true)
+                "STDERR_DRAIN_TIMEOUT"
+            }
             val exitCode = process.exitValue()
 
             ShellResult(exitCode, stdout, stderr)
         } catch (e: Throwable) {
             ShellResult(-1, "", e.message ?: e.toString())
+        } finally {
+            process.destroyForcibly()
         }
     }
 
@@ -97,7 +91,7 @@ class ShizukuShellService : IShellService.Stub() {
 
     companion object {
         private const val STREAM_CAP_BYTES = 262_144 // 256 KB cap
-        private val PKG_REGEX = Regex("^[a-zA-Z0-9_.]+$")
+        private val PKG_REGEX = Regex("^[a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+$") // Requires at least one dot
         private val COMPONENT_REGEX = Regex("^[a-zA-Z0-9_.$]+/[a-zA-Z0-9_.$]+$")
 
         private val ALLOWED_BINARIES = setOf("cmd", "pm", "am", "dumpsys")
@@ -117,10 +111,65 @@ class ShizukuShellService : IShellService.Stub() {
             "dumpsys activity"
         )
 
-        private val ALLOWED_KEYWORDS = setOf(
-            "restricted", "rare", "ignore", "true", "false", "exit-info",
-            "set-chain3-enabled", "set-package-networking-enabled",
-            "oem_deny_3", "add", "remove", "set", "get", "RUN_ANY_IN_BACKGROUND"
+        private val SUBCOMMANDS: Map<String, Set<String>> = mapOf(
+            "cmd connectivity" to setOf("set-chain3-enabled", "set-package-networking-enabled", "oem_deny_3", "help"),
+            "cmd appops" to setOf("set", "get", "help"),
+            "cmd package" to setOf("help"),
+            "dumpsys activity" to setOf("exit-info", "help")
         )
+
+        private val ALLOWED_KEYWORDS = setOf(
+            "restricted", "active", "rare", "working_set", "frequent",
+            "ignore", "allow", "default", "foreground",
+            "true", "false", "exit-info",
+            "set-chain3-enabled", "set-package-networking-enabled",
+            "oem_deny_3", "add", "remove", "set", "get", "RUN_ANY_IN_BACKGROUND", "help"
+        )
+
+        fun validateCommand(cmd: Array<out String>?): String? {
+            if (cmd == null || cmd.isEmpty()) {
+                return "Empty command"
+            }
+
+            val binary = cmd[0].removePrefix("/system/bin/")
+            val subcmd = if (cmd.size > 1) cmd[1] else ""
+
+            val pair = "$binary $subcmd".trim()
+            val isAllowedPrefix = ALLOWED_COMMAND_PREFIXES.any { pair == it || pair.startsWith("$it ") } ||
+                    (ALLOWED_BINARIES.contains(binary) && (subcmd == "help" || subcmd == "--help"))
+
+            if (!isAllowedPrefix) {
+                return "Command prefix not in allowlist: $pair"
+            }
+
+            val allowedSubs = SUBCOMMANDS[pair]
+            if (allowedSubs != null) {
+                if (cmd.size < 3 || !allowedSubs.contains(cmd[2])) {
+                    val actualSub = if (cmd.size >= 3) cmd[2] else "<none>"
+                    return "Subcommand not allowed for $pair: $actualSub"
+                }
+            }
+
+            // Validate package, component, and keyword arguments
+            for (i in 2 until cmd.size) {
+                val arg = cmd[i]
+                if (arg.startsWith("-")) continue
+                if (arg.contains("/")) {
+                    if (!COMPONENT_REGEX.matches(arg)) {
+                        return "Invalid component argument: $arg"
+                    }
+                } else if (arg.all { it.isDigit() }) {
+                    continue
+                } else if (ALLOWED_KEYWORDS.contains(arg)) {
+                    continue
+                } else if (PKG_REGEX.matches(arg)) {
+                    continue
+                } else {
+                    return "Invalid package or keyword argument: $arg"
+                }
+            }
+
+            return null
+        }
     }
 }

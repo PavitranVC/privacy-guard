@@ -14,10 +14,13 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -41,7 +44,11 @@ class ShizukuManager private constructor(private val appContext: Context) {
         Thread(r, "PrivacyGuard-Shizuku-Executor")
     }
     val ioSingle: CoroutineDispatcher = singleThreadExecutor.asCoroutineDispatcher()
-    private val scope = CoroutineScope(ioSingle)
+    private val scope = CoroutineScope(
+        SupervisorJob() + ioSingle + CoroutineExceptionHandler { _, t ->
+            Log.e(TAG, "Uncaught in ShizukuManager scope", t)
+        }
+    )
 
     @Volatile
     private var shellService: IShellService? = null
@@ -82,6 +89,10 @@ class ShizukuManager private constructor(private val appContext: Context) {
             Log.w(TAG, "Shizuku UserService disconnected")
             shellService = null
             isBinding = false
+            scope.launch {
+                delay(2000L)
+                checkAndBindUserService()
+            }
         }
     }
 
@@ -130,6 +141,13 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
         if (shellService == null && !isBinding) {
             isBinding = true
+            scope.launch {
+                delay(10_000L)
+                if (isBinding && shellService == null) {
+                    Log.w(TAG, "UserService binding timed out after 10s; resetting isBinding flag")
+                    isBinding = false
+                }
+            }
             try {
                 Shizuku.bindUserService(userServiceArgs, userServiceConnection)
             } catch (t: Throwable) {
@@ -215,6 +233,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
                                 db.policyOpDao().markApplied(op.id, activeGen, result.statusString)
                             }
                         }
+                        opSucceeded = opSucceeded && (rowsUpdated == 1)
                     }
                 }
 
@@ -224,8 +243,21 @@ class ShizukuManager private constructor(private val appContext: Context) {
                     val userId = appUid / 100000
 
                     val snapshotJson = ShellOps.createPreMutationSnapshot(appContext, op.pkg, targetComponents)
-                    withContext(NonCancellable) {
+                    if (snapshotJson.isBlank() || snapshotJson == "{}") {
+                        withContext(NonCancellable) {
+                            handleTransientFailure(db, op.id, activeGen, op.attempts, "SNAPSHOT_EMPTY_OR_INVALID")
+                        }
+                        return@withContext false
+                    }
+
+                    val savedRows = withContext(NonCancellable) {
                         db.policyOpDao().saveSnapshot(op.id, activeGen, snapshotJson)
+                    }
+                    if (savedRows != 1) {
+                        withContext(NonCancellable) {
+                            handleTransientFailure(db, op.id, activeGen, op.attempts, "SNAPSHOT_NOT_PERSISTED")
+                        }
+                        return@withContext false
                     }
 
                     val appliedAt = System.currentTimeMillis()
@@ -236,7 +268,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
                     withContext(NonCancellable) {
                         rowsUpdated = db.policyOpDao().markApplied(op.id, activeGen, "Disabled ${targetComponents.size} components")
-                        opSucceeded = true
+                        opSucceeded = (rowsUpdated == 1)
                     }
                 }
 
@@ -270,7 +302,6 @@ class ShizukuManager private constructor(private val appContext: Context) {
             }
         }
 
-        check(rowsUpdated >= 0)
         return@withContext opSucceeded
     }
 
@@ -304,7 +335,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
         WorkManager.getInstance(appContext).enqueueUniqueWork(
             "watchdog:$policyOpId",
-            ExistingWorkPolicy.KEEP,
+            ExistingWorkPolicy.REPLACE,
             watchdogRequest
         )
     }
@@ -321,15 +352,29 @@ class ShizukuManager private constructor(private val appContext: Context) {
         }
         val userId = appInfo.uid / 100000
 
+        val eligibleStatuses = setOf(
+            PolicyOp.STATUS_APPLIED,
+            PolicyOp.STATUS_APPLIED_PARTIAL,
+            PolicyOp.STATUS_DRIFT,
+            PolicyOp.STATUS_APPLYING,
+            PolicyOp.STATUS_FAILED_TRANSIENT,
+            PolicyOp.STATUS_PENDING
+        )
+        val opsToRollback = ops.filter { it.status in eligibleStatuses }.sortedByDescending { it.id }
+
         var overallSuccess = true
-        for (op in ops) {
-            if (op.snapshot.isNullOrBlank()) {
+        for (op in opsToRollback) {
+            if (op.snapshot.isNullOrBlank() || op.snapshot == "{}") {
                 if (op.op == "isolate_wifi") {
                     try {
-                        exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
-                        exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                        exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
-                        db.policyOpDao().markSuperseded(op.id, op.gen)
+                        val r1 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                        val r2 = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                        val r3 = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                        if (r1.exitCode == 0 && r2.exitCode == 0 && r3.exitCode == 0) {
+                            db.policyOpDao().markSuperseded(op.id, op.gen)
+                        } else {
+                            overallSuccess = false
+                        }
                     } catch (_: Throwable) {
                         overallSuccess = false
                     }
@@ -358,7 +403,8 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
                     val res = exec(cmd)
                     val observed = pm.getComponentEnabledSetting(componentName)
-                    if (res.exitCode != 0 || (state != 0 && observed != state)) {
+                    val expectedState = if (state in 1..3) state else PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                    if (res.exitCode != 0 || observed != expectedState) {
                         opRestored = false
                     }
                 }

@@ -23,6 +23,8 @@ class CrashWatchdogWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        if (runAttemptCount >= 5) return Result.failure()
+
         val policyOpId = inputData.getLong(KEY_POLICY_OP_ID, -1L)
         val appliedAt = inputData.getLong(KEY_APPLIED_AT, -1L)
 
@@ -53,24 +55,25 @@ class CrashWatchdogWorker(
             // Split into individual ApplicationExitInfo blocks
             val blocks = dumpsysOut.split("ApplicationExitInfo #")
             val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-            val reasonRegex = Regex("reason=(4|5|6|7)\\b") // 4=CRASH, 5=CRASH_NATIVE, 6=ANR, 7=INITIALIZATION_FAILURE
+            val reasonRegex = Regex("""(?<![A-Za-z])reason=([4-7])\b""") // 4=CRASH, 5=CRASH_NATIVE, 6=ANR, 7=INITIALIZATION_FAILURE
 
             for (block in blocks) {
                 if (!reasonRegex.containsMatchIn(block)) continue
 
-                val tsLine = block.lines().firstOrNull { it.trim().startsWith("timestamp=") }
-                if (tsLine != null) {
-                    val rawTs = tsLine.substringAfter("timestamp=").trim().substringBefore(" ")
-                    val timestamp = try {
-                        sdf.parse(rawTs)?.time
+                val tsMatch = Regex("""timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})""").find(block)
+                val timestamp = if (tsMatch != null) {
+                    try {
+                        sdf.parse(tsMatch.groupValues[1])?.time
                     } catch (_: Throwable) {
-                        rawTs.toLongOrNull()
+                        null
                     }
+                } else {
+                    Regex("""timestamp=(\d{10,13})\b""").find(block)?.groupValues?.get(1)?.toLongOrNull()
+                }
 
-                    if (timestamp != null && timestamp in appliedAt..(appliedAt + 60_000L)) {
-                        crashDetected = true
-                        break
-                    }
+                if (timestamp != null && timestamp in appliedAt..(appliedAt + 60_000L)) {
+                    crashDetected = true
+                    break
                 }
             }
         }
@@ -81,7 +84,10 @@ class CrashWatchdogWorker(
                 restoreSnapshotViaShell(shizuku, op.pkg, op.snapshot)
             }
             if (restored) {
-                db.policyOpDao().markRolledBackUnsafe(op.id, op.gen)
+                val freshOp = db.policyOpDao().getById(op.id)
+                if (freshOp != null) {
+                    db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
+                }
             } else {
                 return Result.retry()
             }
@@ -95,7 +101,7 @@ class CrashWatchdogWorker(
         pkg: String,
         snapshotJson: String?
     ): Boolean {
-        if (snapshotJson.isNullOrBlank()) return true
+        if (snapshotJson.isNullOrBlank() || snapshotJson == "{}") return false
         return try {
             val pm = applicationContext.packageManager
             val appInfo = pm.getApplicationInfo(pkg, 0)
@@ -122,7 +128,8 @@ class CrashWatchdogWorker(
 
                 val res = shizuku.exec(cmd)
                 val observed = pm.getComponentEnabledSetting(componentName)
-                if (res.exitCode != 0 || (state != 0 && observed != state)) {
+                val expectedState = if (state in 1..3) state else PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                if (res.exitCode != 0 || observed != expectedState) {
                     allSucceeded = false
                 }
             }

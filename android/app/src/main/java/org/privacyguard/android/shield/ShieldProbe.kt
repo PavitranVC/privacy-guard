@@ -46,8 +46,12 @@ object ShieldProbe {
 
         val cr = context.contentResolver
         val activeNetwork = cm.activeNetwork
-        val lp = activeNetwork?.let { cm.getLinkProperties(it) }
-        val caps = activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        if (activeNetwork == null) {
+            return fallbackTelemetry()
+        }
+
+        val lp = cm.getLinkProperties(activeNetwork)
+        val caps = cm.getNetworkCapabilities(activeNetwork)
 
         val isPrivateDnsActive = lp?.isPrivateDnsActive == true
         val privateDnsServerName = lp?.privateDnsServerName
@@ -63,19 +67,6 @@ object ShieldProbe {
         val isSinkholeActive = probeCanarySinkhole()
 
         // 2. Dual-Socket Cloudflare Trace Probe
-        if (activeNetwork == null) {
-            return ShieldTelemetry(
-                isPrivateDnsActive = isPrivateDnsActive,
-                privateDnsServerName = privateDnsServerName,
-                isVpnActive = isVpnActive,
-                isAlwaysOnLockdown = isAlwaysOnLockdown,
-                isSinkholeActive = isSinkholeActive,
-                egressIp = null,
-                warpStatus = "off",
-                tunnelStatus = TunnelStatus.DISCONNECTED
-            )
-        }
-
         val activeTrace = fetchTrace(activeNetwork)
 
         val tunnelStatus: TunnelStatus
@@ -84,11 +75,22 @@ object ShieldProbe {
                 // VPN transport is up but active HTTP socket times out
                 tunnelStatus = TunnelStatus.STALLED
             } else {
-                val underlying = getUnderlyingNetworks(caps)?.firstOrNull()
-                if (underlying != null) {
-                    val underlyingTrace = fetchTrace(underlying)
-                    if (underlyingTrace != null && underlyingTrace.ip != null && underlyingTrace.ip == activeTrace.ip) {
-                        // Equal egress IPs between VPN and underlying network indicates a tunnel leak
+                // Discover physical underlying network via cm.allNetworks (non-SystemApi)
+                val physicalNetwork = cm.allNetworks.firstOrNull { net ->
+                    val netCaps = cm.getNetworkCapabilities(net)
+                    netCaps != null &&
+                            !netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                            netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED) &&
+                            (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                             netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                             netCaps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+                }
+
+                if (physicalNetwork != null) {
+                    val physicalTrace = fetchTrace(physicalNetwork)
+                    if (physicalTrace != null && physicalTrace.ip != null && physicalTrace.ip == activeTrace.ip) {
+                        // Equal egress IPs between VPN and physical network indicates a tunnel leak
                         tunnelStatus = TunnelStatus.LEAKING
                     } else {
                         tunnelStatus = TunnelStatus.HEALTHY
@@ -126,21 +128,28 @@ object ShieldProbe {
                         addr.hostAddress == "::1"
             }
         } catch (_: UnknownHostException) {
-            // NXDOMAIN indicates the host was successfully blocked by DNS sinkhole
-            true
+            // Check if network is truly up by verifying cloudflare-dns.com resolves
+            try {
+                val cfAddresses = InetAddress.getAllByName("cloudflare-dns.com")
+                cfAddresses.isNotEmpty() // If cloudflare resolves, canary host is truly sinkholed
+            } catch (_: Throwable) {
+                false // Network is offline or DNS unavailable; not a sinkhole
+            }
         } catch (_: Throwable) {
             false
         }
     }
 
     private fun fetchTrace(network: Network): CloudflareTrace? {
+        var conn: HttpURLConnection? = null
         return try {
             val url = URL(CLOUDFLARE_TRACE_URL)
-            val conn = network.openConnection(url) as HttpURLConnection
+            conn = network.openConnection(url) as HttpURLConnection
             conn.connectTimeout = CONNECT_TIMEOUT_MS
             conn.readTimeout = READ_TIMEOUT_MS
             conn.instanceFollowRedirects = false
             conn.setRequestProperty("User-Agent", "PrivacyGuard/1.0")
+            conn.setRequestProperty("Connection", "close")
 
             if (conn.responseCode == 200) {
                 val content = conn.inputStream.bufferedReader().use { it.readText() }
@@ -150,6 +159,10 @@ object ShieldProbe {
             }
         } catch (_: Throwable) {
             null
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (_: Throwable) {}
         }
     }
 
@@ -169,17 +182,6 @@ object ShieldProbe {
             }
         }
         return CloudflareTrace(ip = ip, warp = warp, dns = dns)
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun getUnderlyingNetworks(caps: NetworkCapabilities?): List<Network>? {
-        if (caps == null) return null
-        return try {
-            val method = caps.javaClass.getMethod("getUnderlyingNetworks")
-            method.invoke(caps) as? List<Network>
-        } catch (_: Throwable) {
-            null
-        }
     }
 
     private fun fallbackTelemetry(): ShieldTelemetry {

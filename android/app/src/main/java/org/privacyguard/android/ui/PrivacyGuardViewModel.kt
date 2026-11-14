@@ -80,7 +80,7 @@ class PrivacyGuardViewModel(
     private val TAG = "PrivacyGuardVM"
 
     private val _shizukuStatus = MutableStateFlow(computeShizukuStatus())
-    private val _shieldStatus = MutableStateFlow(ShieldProbe.checkShield(application))
+    private val _shieldStatus = MutableStateFlow(UiState().shieldStatus)
     private val _isScanning = MutableStateFlow(false)
     private val _searchQuery = MutableStateFlow("")
     private val _activeFilter = MutableStateFlow(AppFilter.ALL)
@@ -329,8 +329,8 @@ class PrivacyGuardViewModel(
             val now = System.currentTimeMillis()
             val op = PolicyOp(
                 pkg = pkg,
-                versionCode = app.versionCode,
-                lastUpdateTime = now,
+                versionCode = pkgInfo.longVersionCode,
+                lastUpdateTime = pkgInfo.lastUpdateTime,
                 op = ShellOps.OP_DISABLE_COMPONENTS,
                 target = targetComponents.joinToString(","),
                 desired = ShellOps.DESIRED_DISABLED,
@@ -338,7 +338,7 @@ class PrivacyGuardViewModel(
                 nextAt = now
             )
 
-            database.policyOpDao().upsertPreservingSnapshotAndGen(op)
+            database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             _statusMessage.value = "Queued component disable for ${targetComponents.size} tracker components"
             shizukuManager.drainRunnableOps()
         }
@@ -349,12 +349,23 @@ class PrivacyGuardViewModel(
      */
     fun restrictBackgroundNetworking(pkg: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val app = database.appScanResultDao().getByPackage(pkg) ?: return@launch
+            if (ShellOps.isSafeListed(getApplication(), pkg)) {
+                _statusMessage.value = "Cannot restrict networking on protected system package: $pkg"
+                return@launch
+            }
+
+            val pm = getApplication<Application>().packageManager
+            val pkgInfo = try {
+                pm.getPackageInfo(pkg, 0)
+            } catch (_: Throwable) {
+                null
+            } ?: return@launch
+
             val now = System.currentTimeMillis()
             val op = PolicyOp(
                 pkg = pkg,
-                versionCode = app.versionCode,
-                lastUpdateTime = now,
+                versionCode = pkgInfo.longVersionCode,
+                lastUpdateTime = pkgInfo.lastUpdateTime,
                 op = ShellOps.OP_ISOLATE_WIFI,
                 target = "background",
                 desired = ShellOps.DESIRED_ISOLATED,
@@ -362,7 +373,7 @@ class PrivacyGuardViewModel(
                 nextAt = now
             )
 
-            database.policyOpDao().upsertPreservingSnapshotAndGen(op)
+            database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             _statusMessage.value = "Queued background network restrictions for $pkg"
             shizukuManager.drainRunnableOps()
         }

@@ -1,4 +1,3 @@
-import java.security.SecureRandom
 import java.util.Properties
 
 plugins {
@@ -13,27 +12,36 @@ plugins {
 val keystorePropsFile = file("keystore/keystore.properties")
 val releaseKeystoreFile = file("keystore/release.jks")
 
-val releasePassword: String = run {
-    val envPass = System.getenv("KEYSTORE_PASSWORD")
-    if (!envPass.isNullOrBlank()) {
-        envPass
-    } else if (keystorePropsFile.exists()) {
+val releaseStorePassword: String? = System.getenv("PG_KEYSTORE_PASSWORD")
+    ?: System.getenv("KEYSTORE_PASSWORD")
+    ?: if (keystorePropsFile.exists()) {
         val props = Properties()
         keystorePropsFile.inputStream().use { props.load(it) }
-        props.getProperty("password") ?: "privacyguard123"
-    } else {
-        val pass = if (releaseKeystoreFile.exists()) {
-            "privacyguard123"
-        } else {
-            val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-            val random = SecureRandom()
-            (1..32).map { chars[random.nextInt(chars.length)] }.joinToString("")
-        }
-        keystorePropsFile.parentFile?.mkdirs()
+        props.getProperty("storePassword") ?: props.getProperty("password")
+    } else null
+
+val releaseKeyPassword: String? = System.getenv("PG_KEY_PASSWORD")
+    ?: System.getenv("KEY_PASSWORD")
+    ?: if (keystorePropsFile.exists()) {
         val props = Properties()
-        props.setProperty("password", pass)
-        keystorePropsFile.outputStream().use { props.store(it, "Local release keystore password") }
-        pass
+        keystorePropsFile.inputStream().use { props.load(it) }
+        props.getProperty("keyPassword") ?: props.getProperty("password")
+    } else null
+
+val releaseKeyAlias: String? = System.getenv("PG_KEY_ALIAS")
+    ?: if (keystorePropsFile.exists()) {
+        val props = Properties()
+        keystorePropsFile.inputStream().use { props.load(it) }
+        props.getProperty("keyAlias") ?: "privacyguard"
+    } else "privacyguard"
+
+val hasReleaseSigning = releaseKeystoreFile.exists() && !releaseStorePassword.isNullOrBlank()
+
+if (project.hasProperty("requireReleaseSigning") && !hasReleaseSigning) {
+    gradle.taskGraph.whenReady {
+        if (hasTask(":app:assembleRelease") || hasTask(":app:bundleRelease")) {
+            throw GradleException("Release signing credentials required by -PrequireReleaseSigning but missing or incomplete!")
+        }
     }
 }
 
@@ -76,14 +84,12 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            if (releaseKeystoreFile.exists()) {
+        if (hasReleaseSigning) {
+            create("release") {
                 storeFile = releaseKeystoreFile
-                storePassword = releasePassword
-                keyAlias = "privacyguard"
-                keyPassword = releasePassword
-            } else {
-                initWith(getByName("debug"))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword ?: releaseStorePassword
             }
         }
     }
@@ -92,7 +98,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = null
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
