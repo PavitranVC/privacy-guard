@@ -63,6 +63,9 @@ interface PolicyOpDao {
     @Query("UPDATE policy_op SET snapshot = :snapshot WHERE id = :id AND gen = :activeGen AND status = 'APPLYING'")
     suspend fun updateSnapshot(id: Long, activeGen: Long, snapshot: String): Int
 
+    @Query("UPDATE policy_op SET observed = :observed WHERE id = :id AND gen = :activeGen AND status = 'APPLYING'")
+    suspend fun updateObserved(id: Long, activeGen: Long, observed: String): Int
+
     @Query("""
         UPDATE policy_op
         SET status = 'APPLIED',

@@ -352,7 +352,8 @@ object ShellOps {
         pkg: String,
         capabilityDao: CapabilityDao? = null,
         existingObserved: String? = null,
-        existingStatus: String? = null
+        existingStatus: String? = null,
+        onPersistObserved: (suspend (String) -> Boolean)? = null
     ): NetworkIsolationOutcome {
         val pm = context.packageManager
         val pkgInfo = try {
@@ -431,6 +432,14 @@ object ShellOps {
                 }
             }
 
+            val formattedStatus = formatIsolationResult(IsolationResult.APPOPS_PARTIAL, priors)
+            if (onPersistObserved != null) {
+                val persisted = onPersistObserved(formattedStatus)
+                if (!persisted) {
+                    throw ConcurrentMutationException("Failed to persist priors before mutation for $pkg (lost gen/lease race)")
+                }
+            }
+
             val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"))
             checkSecurityDenial(rAppOps.stderr)
             val rBucket = shellService.exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "restricted"))
@@ -440,7 +449,6 @@ object ShellOps {
             val verifyOut = verify.stdout
             val pattern = Regex("RUN_ANY_IN_BACKGROUND:\\s*ignore", RegexOption.IGNORE_CASE)
             if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
-                val formattedStatus = formatIsolationResult(IsolationResult.APPOPS_PARTIAL, priors)
                 return NetworkIsolationOutcome(IsolationResult.APPOPS_PARTIAL, formattedStatus)
             }
         } catch (e: SecurityException) {
