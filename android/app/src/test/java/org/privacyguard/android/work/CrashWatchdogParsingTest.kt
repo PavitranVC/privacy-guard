@@ -11,7 +11,7 @@ class CrashWatchdogParsingTest {
     private val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
     @Test
-    fun `test subreason 4 on other reason does not trigger crash detection`() {
+    fun `synthetic test subreason 4 on other reason does not trigger crash detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val dumpBlock = """
             ApplicationExitInfo #1:
@@ -30,7 +30,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test crash reason 4 within window triggers detection`() {
+    fun `synthetic test crash reason 4 within window triggers detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val dumpBlock = """
             ApplicationExitInfo #1:
@@ -48,7 +48,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test native crash reason 5 within window triggers detection`() {
+    fun `synthetic test native crash reason 5 within window triggers detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val dumpBlock = """
             ApplicationExitInfo #1:
@@ -61,7 +61,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test ANR reason 6 within window triggers detection`() {
+    fun `synthetic test ANR reason 6 within window triggers detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val dumpBlock = """
             ApplicationExitInfo #1:
@@ -74,7 +74,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test user requested exit reason 10 does not trigger crash detection`() {
+    fun `synthetic test user requested exit reason 10 does not trigger crash detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val dumpBlock = """
             ApplicationExitInfo #1:
@@ -87,7 +87,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test crash outside window does not trigger detection`() {
+    fun `synthetic test crash outside window does not trigger detection`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         // Timestamp is 2 minutes later, outside the 60s window
         val dumpBlock = """
@@ -101,7 +101,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test numeric epoch timestamp fallback within window`() {
+    fun `synthetic test numeric epoch timestamp fallback within window`() {
         val baseTime = 1731580800000L
         val crashTime = baseTime + 15_000L // 15s into window
         val dumpBlock = """
@@ -115,7 +115,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test multi-block dumpsys with past crash and current benign exit`() {
+    fun `synthetic test multi-block dumpsys with past crash and current benign exit`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val multiBlock = """
             ApplicationExitInfo #1:
@@ -131,21 +131,7 @@ class CrashWatchdogParsingTest {
     }
 
     @Test
-    fun `test real moto g54 exit info fixture crash detection`() {
-        val fixture = javaClass.classLoader!!.getResourceAsStream("fixtures/moto_g54_sdk35_exit_info.txt")!!
-            .bufferedReader().readText()
-
-        // 1. Applied at 18:16:00 covers ApplicationExitInfo #0 at 18:16:12.540 (reason=4 APP CRASH)
-        val crashAppliedAt = sdf.parse("2026-11-14 18:16:00.000")!!.time
-        assertTrue(CrashWatchdogWorker.hasCrashInWindow(fixture, crashAppliedAt, 60_000L))
-
-        // 2. Applied at 07:48:00 covers only ApplicationExitInfo #1 at 07:48:20.970 (reason=13 OTHER KILLS)
-        val benignAppliedAt = sdf.parse("2026-11-14 07:48:00.000")!!.time
-        assertFalse(CrashWatchdogWorker.hasCrashInWindow(fixture, benignAppliedAt, 60_000L))
-    }
-
-    @Test
-    fun `test subreason 4 on same line as reason 13 within window returns false`() {
+    fun `synthetic test subreason 4 on same line as reason 13 within window returns false`() {
         val baseTime = sdf.parse("2026-11-14 12:00:00.000")!!.time
         val sameLineDump = """
             ApplicationExitInfo #0:
@@ -155,5 +141,52 @@ class CrashWatchdogParsingTest {
 
         // subreason=4 must not trigger reason=4 regex
         assertFalse(CrashWatchdogWorker.hasCrashInWindow(sameLineDump, baseTime, 60_000L))
+    }
+
+    @Test
+    fun `test real moto g54 restore fixture has no crash in window for any entry`() {
+        val fixture = javaClass.classLoader!!.getResourceAsStream("fixtures/moto_g54_sdk35_exit_info.txt")!!
+            .bufferedReader().readText()
+
+        val tsRegex = Regex("""timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})""")
+        val matches = tsRegex.findAll(fixture).toList()
+        assertTrue(matches.isNotEmpty())
+
+        for (match in matches) {
+            val entryTime = sdf.parse(match.groupValues[1])!!.time
+            // For every entry timestamp T, hasCrashInWindow(fixture, T-5s, 60s) == false
+            assertFalse(CrashWatchdogWorker.hasCrashInWindow(fixture, entryTime - 5_000L, 60_000L))
+        }
+    }
+
+    @Test
+    fun `test real moto g54 crash fixture detects reason 4 within window and false outside`() {
+        val crashFixture = javaClass.classLoader!!.getResourceAsStream("fixtures/moto_g54_sdk35_exit_info_crash.txt")!!
+            .bufferedReader().readText()
+
+        // Find the entry that has reason=4
+        val blocks = crashFixture.split("ApplicationExitInfo #")
+        var crashTimestamp: Long? = null
+        val tsRegex = Regex("""timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})""")
+        val reasonRegex = Regex("""(?<![A-Za-z])reason=4\b""")
+
+        for (block in blocks) {
+            if (reasonRegex.containsMatchIn(block)) {
+                val match = tsRegex.find(block)
+                if (match != null) {
+                    crashTimestamp = sdf.parse(match.groupValues[1])?.time
+                    break
+                }
+            }
+        }
+
+        assertTrue("Crash fixture must contain a reason=4 entry", crashTimestamp != null)
+        val t = crashTimestamp!!
+
+        // For the reason=4 entry timestamp T:
+        // hasCrashInWindow(fixture, T-5s, 60s) == true
+        assertTrue(CrashWatchdogWorker.hasCrashInWindow(crashFixture, t - 5_000L, 60_000L))
+        // and hasCrashInWindow(fixture, T+120s, 60s) == false
+        assertFalse(CrashWatchdogWorker.hasCrashInWindow(crashFixture, t + 120_000L, 60_000L))
     }
 }

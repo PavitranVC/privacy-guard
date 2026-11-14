@@ -1,0 +1,68 @@
+ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)
+Last Timestamp of Persistence Into Persistent Storage: 2026-11-14 18:40:33.442
+  package: com.google.android.calculator
+    Historical Process Exit for uid=10225
+        ApplicationExitInfo #0:
+          timestamp=2026-11-14 18:41:12.395 pid=11176 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=4 (APP CRASH(EXCEPTION)) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=0.00 rss=0.00 description=crash state=empty trace=null
+        ApplicationExitInfo #1:
+          timestamp=2026-11-14 18:16:12.540 pid=8543 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=4 (APP CRASH(EXCEPTION)) subreason=0 (UNKNOWN) status=0
+          importance=325 pss=0.00 rss=0.00 description=crash state=empty trace=null
+        ApplicationExitInfo #2:
+          timestamp=2026-10-28 20:06:59.246 pid=26073 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=124MB description=remove task state=empty trace=null
+        ApplicationExitInfo #3:
+          timestamp=2026-10-23 16:10:37.554 pid=21635 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=171MB description=remove task state=empty trace=null
+        ApplicationExitInfo #4:
+          timestamp=2026-10-14 17:16:49.349 pid=27584 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
+          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null
+        ApplicationExitInfo #5:
+          timestamp=2026-10-03 04:24:22.579 pid=31910 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=124MB description=remove task state=empty trace=null
+        ApplicationExitInfo #6:
+          timestamp=2026-10-03 01:39:43.888 pid=9792 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=121MB description=remove task state=empty trace=null
+        ApplicationExitInfo #7:
+          timestamp=2026-09-30 15:17:33.521 pid=4781 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=126MB description=remove task state=empty trace=null
+        ApplicationExitInfo #8:
+          timestamp=2026-09-21 01:03:07.697 pid=12540 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
+          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null
+        ApplicationExitInfo #9:
+          timestamp=2026-09-17 15:46:49.431 pid=2061 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=154MB description=remove task state=empty trace=null
+        ApplicationExitInfo #10:
+          timestamp=2026-09-16 15:46:46.223 pid=22647 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=210MB description=remove task state=empty trace=null
+        ApplicationExitInfo #11:
+          timestamp=2026-09-15 01:08:45.092 pid=26912 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
+          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null
+        ApplicationExitInfo #12:
+          timestamp=2026-09-11 11:04:00.451 pid=18238 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=122MB description=remove task state=empty trace=null
+        ApplicationExitInfo #13:
+          timestamp=2026-09-07 16:08:16.661 pid=26925 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=120MB description=remove task state=empty trace=null
+        ApplicationExitInfo #14:
+          timestamp=2026-09-06 01:11:25.888 pid=28726 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
+          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null
+        ApplicationExitInfo #15:
+          timestamp=2026-09-04 23:19:05.557 pid=2103 realUid=10225 packageUid=10225 definingUid=10225 user=0
+          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
+          importance=400 pss=0.00 rss=126MB description=remove task state=empty trace=null

@@ -1,20 +1,77 @@
 ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)
-Last Timestamp of Persistence Into Persistent Storage: 2026-11-14 17:51:26.961
-  package: com.google.android.calculator
-    Historical Process Exit for uid=10225
+Last Timestamp of Persistence Into Persistent Storage: 2026-11-14 18:40:33.442
+  package: com.google.android.apps.restore
+    Historical Process Exit for uid=10181
         ApplicationExitInfo #0:
-          timestamp=2026-11-14 18:16:12.540 pid=8543 realUid=10225 packageUid=10225 definingUid=10225 user=0
-          process=com.google.android.calculator reason=4 (APP CRASH(EXCEPTION)) subreason=0 (UNKNOWN) status=0
-          importance=325 pss=0.00 rss=0.00 description=crash state=empty trace=null
+          timestamp=2026-11-14 17:20:41.663 pid=22425 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
         ApplicationExitInfo #1:
           timestamp=2026-11-14 07:48:20.970 pid=23749 realUid=10181 packageUid=10181 definingUid=10181 user=0
-          process=com.google.android.calculator reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
           importance=400 pss=0.00 rss=107MB description=too many empty state=empty trace=null
         ApplicationExitInfo #2:
-          timestamp=2026-10-28 20:06:59.246 pid=26073 realUid=10225 packageUid=10225 definingUid=10225 user=0
-          process=com.google.android.calculator reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK) status=0
-          importance=400 pss=0.00 rss=124MB description=remove task state=empty trace=null
+          timestamp=2026-11-14 03:35:21.909 pid=25503 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
         ApplicationExitInfo #3:
-          timestamp=2026-10-14 17:16:49.349 pid=27584 realUid=10225 packageUid=10225 definingUid=10225 user=0
-          process=com.google.android.calculator reason=2 (SIGNALED) subreason=0 (UNKNOWN) status=9
-          importance=230 pss=0.00 rss=0.00 description=null state=empty trace=null
+          timestamp=2026-11-14 02:57:05.033 pid=11760 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #4:
+          timestamp=2026-11-14 02:39:55.186 pid=27060 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #5:
+          timestamp=2026-11-13 23:26:28.754 pid=21493 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=104MB description=too many empty state=empty trace=null
+        ApplicationExitInfo #6:
+          timestamp=2026-11-13 14:11:31.506 pid=27844 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #7:
+          timestamp=2026-11-13 13:42:58.939 pid=19919 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=99MB description=too many empty state=empty trace=null
+        ApplicationExitInfo #8:
+          timestamp=2026-11-13 12:42:42.938 pid=4994 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #9:
+          timestamp=2026-11-13 05:12:08.455 pid=9507 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #10:
+          timestamp=2026-11-13 05:11:22.096 pid=4819 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #11:
+          timestamp=2026-11-13 01:57:31.097 pid=22868 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=97MB description=too many empty state=empty trace=null
+        ApplicationExitInfo #12:
+          timestamp=2026-11-12 02:41:58.720 pid=28124 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #13:
+          timestamp=2026-11-11 21:55:17.663 pid=25678 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #14:
+          timestamp=2026-11-11 21:52:23.343 pid=21526 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+        ApplicationExitInfo #15:
+          timestamp=2026-11-11 21:36:45.828 pid=11808 realUid=10181 packageUid=10181 definingUid=10181 user=0
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=0.00 description=too many empty state=empty trace=null
+    Historical Process Exit for uid=1110181
+        ApplicationExitInfo #0:
+          timestamp=2025-03-15 06:45:04.443 pid=16846 realUid=1110181 packageUid=1110181 definingUid=1110181 user=11
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=88MB description=too many empty state=empty trace=null
+        ApplicationExitInfo #1:
+          timestamp=2025-03-15 02:07:20.953 pid=25654 realUid=1110181 packageUid=1110181 definingUid=1110181 user=11
+          process=com.google.android.apps.restore reason=13 (OTHER KILLS BY SYSTEM) subreason=3 (TOO MANY EMPTY PROCS) status=0
+          importance=400 pss=0.00 rss=106MB description=too many empty state=empty trace=null
