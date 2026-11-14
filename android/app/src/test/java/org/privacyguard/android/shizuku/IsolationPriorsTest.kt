@@ -348,7 +348,6 @@ class IsolationPriorsTest {
         }
 
         val outcome = ShellOps.runIsolationStep3(
-            priors = priors,
             formattedStatus = formattedStatus,
             appUid = 10355,
             userId = 0,
@@ -381,7 +380,6 @@ class IsolationPriorsTest {
         var thrown = false
         try {
             ShellOps.runIsolationStep3(
-                priors = priors,
                 formattedStatus = formattedStatus,
                 appUid = 10355,
                 userId = 0,
@@ -409,7 +407,6 @@ class IsolationPriorsTest {
         }
 
         val outcome = ShellOps.runIsolationStep3(
-            priors = priors,
             formattedStatus = formattedStatus,
             appUid = 10355,
             userId = 0,
@@ -441,7 +438,6 @@ class IsolationPriorsTest {
         }
 
         val outcome = ShellOps.runIsolationStep3(
-            priors = null,
             formattedStatus = legacyFormattedStatus,
             appUid = 10355,
             userId = 0,

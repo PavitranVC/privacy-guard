@@ -401,7 +401,6 @@ object ShellOps {
     }
 
     suspend fun runIsolationStep3(
-        priors: PriorIsolationState?,
         formattedStatus: String,
         appUid: Int,
         userId: Int,
@@ -519,7 +518,6 @@ object ShellOps {
 
             val formattedStatus = formatIsolationResult(IsolationResult.APPOPS_PARTIAL, priors)
             val outcome = runIsolationStep3(
-                priors = priors,
                 formattedStatus = formattedStatus,
                 appUid = appUid,
                 userId = userId,
