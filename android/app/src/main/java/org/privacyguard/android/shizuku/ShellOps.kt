@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.DeadObjectException
 import android.os.RemoteException
 import android.util.Log
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.privacyguard.android.data.dao.CapabilityDao
@@ -355,6 +356,30 @@ object ShellOps {
             snapshotMap[comp] = pm.getComponentEnabledSetting(componentName)
         }
         return Json.encodeToString(snapshotMap)
+    }
+
+    /**
+     * Merges an existing snapshot with a newly captured snapshot.
+     * Keys present in [existingJson] preserve their original pre-mutation state.
+     * Only keys NEW in [currentJson] take their current value.
+     * If [existingJson] is null, blank, or malformed, [currentJson] is returned.
+     */
+    fun mergeSnapshots(existingJson: String?, currentJson: String): String {
+        if (existingJson.isNullOrBlank()) return currentJson
+        return try {
+            val existing = Json.decodeFromString<Map<String, Int>>(existingJson)
+            val current = Json.decodeFromString<Map<String, Int>>(currentJson)
+            val merged = current.toMutableMap()
+            merged.putAll(existing)
+            Json.encodeToString(merged)
+        } catch (e: Throwable) {
+            try {
+                Log.w(TAG, "Failed to parse/merge snapshots, returning currentJson: ${e.message}")
+            } catch (_: Throwable) {
+                // Ignore logger in unit test environments without android runtime
+            }
+            currentJson
+        }
     }
 
     fun disableManifestComponents(

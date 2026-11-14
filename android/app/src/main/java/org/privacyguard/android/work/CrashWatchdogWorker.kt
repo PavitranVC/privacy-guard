@@ -107,10 +107,29 @@ class CrashWatchdogWorker(
             val appInfo = pm.getApplicationInfo(pkg, 0)
             val userId = appInfo.uid / 100000
 
+            val flags = PackageManager.PackageInfoFlags.of(
+                (PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS or PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
+            )
+            val declaredPkgInfo = try {
+                pm.getPackageInfo(pkg, flags)
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
+            val declaredComponents = if (declaredPkgInfo != null) {
+                val s = declaredPkgInfo.services?.map { it.name } ?: emptyList()
+                val r = declaredPkgInfo.receivers?.map { it.name } ?: emptyList()
+                (s + r).toSet()
+            } else emptySet()
+
             val jsonMap = Json.parseToJsonElement(snapshotJson).jsonObject
             var allSucceeded = true
 
             for ((compNameStr, stateElem) in jsonMap) {
+                if (declaredPkgInfo != null && !declaredComponents.contains(compNameStr)) {
+                    Log.w(TAG, "Component $compNameStr no longer present in APK for $pkg; skipping during snapshot restore")
+                    continue
+                }
+
                 val state = stateElem.jsonPrimitive.intOrNull ?: 0
                 val componentName = ComponentName(pkg, compNameStr)
                 val flatName = componentName.flattenToString()

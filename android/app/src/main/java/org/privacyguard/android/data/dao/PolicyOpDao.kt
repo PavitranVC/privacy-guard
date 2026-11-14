@@ -60,12 +60,8 @@ interface PolicyOpDao {
     """)
     suspend fun claimOp(id: Long, expectedGen: Long, leaseUntilMs: Long, now: Long): Int
 
-    @Query("""
-        UPDATE policy_op
-        SET snapshot = CASE WHEN snapshot IS NULL OR snapshot = '' OR snapshot = '{}' THEN :snapshot ELSE snapshot END
-        WHERE id = :id AND gen = :activeGen AND status = 'APPLYING'
-    """)
-    suspend fun saveSnapshot(id: Long, activeGen: Long, snapshot: String?): Int
+    @Query("UPDATE policy_op SET snapshot = :snapshot WHERE id = :id AND gen = :activeGen AND status = 'APPLYING'")
+    suspend fun updateSnapshot(id: Long, activeGen: Long, snapshot: String): Int
 
     @Query("""
         UPDATE policy_op

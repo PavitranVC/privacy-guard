@@ -37,6 +37,8 @@ import rikka.shizuku.Shizuku
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+class ConcurrentMutationException(message: String) : IllegalStateException(message)
+
 class ShizukuManager private constructor(private val appContext: Context) {
 
     // Single-thread serialized executor for all Shizuku Binder mutations
@@ -242,22 +244,20 @@ class ShizukuManager private constructor(private val appContext: Context) {
                     val appUid = livePkgInfo.applicationInfo?.uid ?: 0
                     val userId = appUid / 100000
 
-                    val snapshotJson = ShellOps.createPreMutationSnapshot(appContext, op.pkg, targetComponents)
-                    if (snapshotJson.isBlank() || snapshotJson == "{}") {
+                    val fresh = ShellOps.createPreMutationSnapshot(appContext, op.pkg, targetComponents)
+                    if (fresh.isBlank() || fresh == "{}") {
                         withContext(NonCancellable) {
                             handleTransientFailure(db, op.id, activeGen, op.attempts, "SNAPSHOT_EMPTY_OR_INVALID")
                         }
                         return@withContext false
                     }
 
-                    val savedRows = withContext(NonCancellable) {
-                        db.policyOpDao().saveSnapshot(op.id, activeGen, snapshotJson)
+                    val merged = ShellOps.mergeSnapshots(op.snapshot, fresh)
+                    val rows = withContext(NonCancellable) {
+                        db.policyOpDao().updateSnapshot(op.id, activeGen, merged)
                     }
-                    if (savedRows != 1) {
-                        withContext(NonCancellable) {
-                            handleTransientFailure(db, op.id, activeGen, op.attempts, "SNAPSHOT_NOT_PERSISTED")
-                        }
-                        return@withContext false
+                    if (rows != 1) {
+                        throw ConcurrentMutationException("Lost gen/status while writing snapshot for op ${op.id}")
                     }
 
                     val appliedAt = System.currentTimeMillis()
@@ -437,9 +437,28 @@ class ShizukuManager private constructor(private val appContext: Context) {
             }
 
             try {
+                val flags = PackageManager.PackageInfoFlags.of(
+                    (PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS or PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
+                )
+                val declaredPkgInfo = try {
+                    pm.getPackageInfo(pkg, flags)
+                } catch (_: PackageManager.NameNotFoundException) {
+                    null
+                }
+                val declaredComponents = if (declaredPkgInfo != null) {
+                    val s = declaredPkgInfo.services?.map { it.name } ?: emptyList()
+                    val r = declaredPkgInfo.receivers?.map { it.name } ?: emptyList()
+                    (s + r).toSet()
+                } else emptySet()
+
                 val jsonMap = Json.parseToJsonElement(op.snapshot).jsonObject
                 var opRestored = true
                 for ((compNameStr, stateElem) in jsonMap) {
+                    if (declaredPkgInfo != null && !declaredComponents.contains(compNameStr)) {
+                        Log.w(TAG, "Component $compNameStr no longer present in APK for $pkg; skipping during rollback")
+                        continue
+                    }
+
                     val state = stateElem.jsonPrimitive.intOrNull ?: 0
                     val componentName = ComponentName(pkg, compNameStr)
                     val flatName = componentName.flattenToString()
