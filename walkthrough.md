@@ -197,22 +197,22 @@ BUILD SUCCESSFUL in 12s
 - Outbound network calls strictly reduced: `ShieldProbe` dual-socket probe reduced from 3 HTTP requests down to 2 (single-pass trace).
 
 ## 4. Release Build & On-Device Verification
-- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (29 tests passed across all 4 suites).
+- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (all unit tests passed (see Gradle output)).
 - `./gradlew assembleRelease`: **BUILD SUCCESSFUL** in 1m 5s (R8 full mode).
 - `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).
 
 ## Milestone M3.5-C / M3.5-D / M3.5-E
 
 ### Milestone M3.5-C (Commits 099f6ba..6c0c0ca)
-- **Item 1 (`099f6ba`):** Replaced fabricated test fixture with genuine device captures (`moto_g54_sdk35_exit_info.txt`, `moto_g54_sdk35_exit_info_crash.txt`) and dynamically derived timestamps in `android/app/src/test/java/org/privacyguard/android/work/CrashWatchdogParsingTest.kt`.
-- **Item 2 (`666bf49`):** Enforced pre-mutation component count check, snapshot merging with existing snapshots, and target count verification in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt` and `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuManager.kt`.
-- **Item 3 (`6337b97`):** Added OSINT poison-pill protection with strict status mapping (`Success`, `Retry`, `Unreachable`, `Invalid`) in `android/app/src/main/java/org/privacyguard/android/osint/OllamaClient.kt` and `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`.
-- **Item 4 (`59f51b1`):** Added Google Play Services APK signature scheme v3 rotated cert to trusted publisher gate in `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt` and `android/app/src/test/java/org/privacyguard/android/osint/TrustedPublisherTest.kt`.
-- **Item 5 (`5e661e4`):** Separated debloat protection gate (`isProtectedForDebloat`) from runtime component mutation gate in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`.
-- **Item 6 (`ac73e10`):** Added `MATCH_DEFAULT_ONLY` flag to UPI `upi://pay` intent resolution query in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`.
-- **Item 7 (`b9fca4b`):** Guarded watchdog generation race using optimistic locking (`WHERE id = :id AND gen = :gen`) in `android/app/src/main/java/org/privacyguard/android/work/CrashWatchdogWorker.kt`.
-- **Item 8 (`60fab7f`):** Decoupled drift check scheduling from package scan worker in `android/app/src/main/java/org/privacyguard/android/trigger/ReconciliationCoordinator.kt`.
-- **Item 9 (`6c0c0ca`):** Replaced triple HTTP probe with single-pass dual-stack leak classification and handled `TunnelStatus.INCONCLUSIVE` in `android/app/src/main/java/org/privacyguard/android/shield/ShieldProbe.kt` and `android/app/src/test/java/org/privacyguard/android/shield/ShieldProbeTest.kt`.
+- Item 1 (099f6ba): Replaced the fabricated fixture with genuine device captures (moto_g54_sdk35_exit_info.txt = restore pkg reason=13; moto_g54_sdk35_exit_info_crash.txt = calculator reason=4); CrashWatchdogParsingTest derives timestamps from the fixtures; inline tests renamed "synthetic".
+- Item 2 (666bf49): Snapshot lifecycle: ShellOps.mergeSnapshots (existing keys win, new keys added), PolicyOpDao.updateSnapshot replaces saveSnapshot, ShizukuManager throws ConcurrentMutationException if the row update loses gen/status; rollbackPackage and CrashWatchdogWorker.restoreSnapshotViaShell skip components no longer declared in the APK.
+- Item 3 (6337b97): OllamaClient.classify returns sealed ClassificationResult (Success / Unreachable / Invalid); worker marks Invalid items OSINT_ERROR and continues; Unreachable retries.
+- Item 4 (59f51b1): Tier1AScanner stores current signers only (apkContentsSigners); OsintClassifierWorker pins trusted publishers per package (Map<pkg, certs>) via isTrustedPublisher; TrustedPublisherTest added.
+- Item 5 (5e661e4): isProtectedForDebloat documented as intentionally unwired scaffolding (KDoc + walkthrough).
+- Item 6 (ac73e10): isDynamicUpiOrPaymentApp query now uses MATCH_DEFAULT_ONLY or MATCH_DISABLED_COMPONENTS.
+- Item 7 (b9fca4b): CrashWatchdogWorker.safeMarkRolledBackUnsafe re-reads the op and retries markRolledBackUnsafe once on a gen race; returns retry/failure if it still fails.
+- Item 8 (60fab7f): ReconciliationCoordinator drift check moved out of the `if (t1 != null)` block into its own try/catch so it runs even if the Tier1A scan fails.
+- Item 9 (6c0c0ca): ShieldProbe.classifyTunnel extracted as a pure function with stricter HEALTHY rules (every family with a VPN IP must have a differing physical IP); ShieldProbeTest added.
 
 ### Milestone M3.5-D (Commit bd4aad2)
 - Added 4xx/5xx status handling in `android/app/src/main/java/org/privacyguard/android/osint/OllamaClient.kt` (treating 404/408/429 and $\ge 500$ as retryable `Unreachable`, 400 and invalid bodies as `Invalid`).
