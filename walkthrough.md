@@ -106,29 +106,34 @@ BUILD SUCCESSFUL in 12s
 ## 1. Files Created/Modified
 
 1. `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`
-   - Added `effectiveTargets(context, packageName, rawTargets)` helper: parses comma-delimited component lists, queries `PackageManager` strictly for declared services and broadcast receivers (excluding content providers and activities), guards accessibility and notification listener services, and filters out safe-listed components.
+   - Added `effectiveTargets(context, packageName, rawTargets)` helper: parses comma-delimited component lists, queries `PackageManager` strictly for declared services and broadcast receivers using `MATCH_DISABLED_COMPONENTS` (so already-disabled components are returned during drift evaluation), excludes content providers and activities, guards accessibility and notification listener services, and filters out safe-listed components and dynamic protected components.
    - Refactored `createPreMutationSnapshot` and `disableManifestComponents` to use `effectiveTargets`.
 2. `android/app/src/main/java/org/privacyguard/android/ui/PrivacyGuardViewModel.kt`
    - In `disableTrackerComponents`: removed content providers from candidate target gathering; invokes `ShellOps.effectiveTargets` and stops early with status message if no mutable services/receivers exist.
-   - Evaluates `upsertPreservingSnapshotAndGen` return codes: `-1L` surfaces crash rollback lock, `0L` notifies operation is already active or user-rolled back, `> 0L` proceeds with execution.
+   - Evaluates `upsertPreservingSnapshotAndGen` return codes with distinct UI messages: `-1L` surfaces crash rollback lock (`ROLLED_BACK_UNSAFE`) or insert conflict, `0L` notifies operation is already active, queued, or user-rolled-back, `> 0L` queues op and drains runnable ops.
 3. `android/app/src/main/java/org/privacyguard/android/trigger/ReconciliationCoordinator.kt`
-   - In `isOpDrifted`: resolves comma-delimited targets via `ShellOps.effectiveTargets` and checks enabled state on individual components (preventing false drift loops).
+   - In `isOpDrifted`: resolves comma-delimited targets via `ShellOps.effectiveTargets` and checks enabled state on individual component names (preventing false drift loops).
    - In `processPending`: removed periodic auto-re-queueing of `FAILED_TRANSIENT` and `FAILED_PERMANENT` ops during regular scans.
    - In `handlePackageReplaced`: queries live `PackageInfo` for updated `versionCode` and `lastUpdateTime`, filters ops strictly excluding `SUPERSEDED`, and passes `packageReplaced = true`.
 4. `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuManager.kt`
-   - In `rollbackPackage`: implemented method-aware `isolate_wifi` reversal based on `op.observed` (`"CHAIN3"`, `"CHAIN9"`, `"APPOPS"`, or fallback); handles blank-snapshot ops by superseding `PENDING`, `APPLYING`, or `FAILED_TRANSIENT` ops; validates `markSuperseded` returned rows (`rows == 1`).
+   - In `rollbackPackage`: implemented method-aware `isolate_wifi` reversal matching `op.observed` with `startsWith`:
+     - `"CHAIN3_PACKAGE_NETWORKING"` -> `cmd connectivity set-package-networking-enabled true <pkg>` (does NOT run `set-chain3-enabled false` which is a global toggle).
+     - `"CHAIN9_BINDER_FIREWALL"` -> `cmd connectivity oem_deny_3 remove <uid>`.
+     - `"APPOPS_STANDBY_RESTRICTED"` -> `cmd appops set --uid <uid> RUN_ANY_IN_BACKGROUND allow` and `am set-standby-bucket --user <u> <pkg> active`.
+     - Blank observed -> runs all three, succeeding if appops and standby-bucket exit 0.
+   - `isolate_wifi` ops do not attempt snapshot restoration; handles blank-snapshot component disable ops by superseding `PENDING`, `APPLYING`, or `FAILED_TRANSIENT` ops; validates `markSuperseded` returned rows (`rows == 1`).
 5. `android/app/src/main/java/org/privacyguard/android/work/CrashWatchdogWorker.kt`
    - In `doWork`: if a process crash is detected within 60s and snapshot restore retries are exhausted (`runAttemptCount >= 4`), transitions op to `markRolledBackUnsafe` (never `markDriftPending`) to prevent infinite crash loops.
 6. `android/app/src/main/java/org/privacyguard/android/data/dao/PolicyOpDao.kt`
    - Cleaned `unlockRolledBackUnsafe` signature and query (removed redundant `:now = :now`).
-   - In `upsertPreservingSnapshotAndGen`: protects `SUPERSEDED` ops with `errClass == "ROLLED_BACK_BY_USER"` from auto-revival unless `userInitiated = true`; returns `0L` when already `PENDING` or `APPLYING`.
+   - In `upsertPreservingSnapshotAndGen`: returns `-1L` on locked/conflict, `0L` on existing/active/user-rolled-back (`STATUS_SUPERSEDED` with `ROLLED_BACK_BY_USER`), and `> 0L` on newly queued or reset ops.
 7. `android/app/src/main/java/org/privacyguard/android/ui/AppDetailScreen.kt`
    - Added `onUnlockAndRetry: (String, String) -> Unit` parameter.
    - Rendered `"Unlock & Retry"` button in the `hasUnsafeRollback` warning banner with a confirmation `AlertDialog` ("Override Crash Protection?").
 8. `android/app/src/main/java/org/privacyguard/android/ui/MainActivity.kt`
    - Wired `onUnlockAndRetry = { pkg, op -> viewModel.unlockAndRetryPolicyOp(pkg, op) }` into `AppDetailScreen`.
 9. `android/app/src/test/java/org/privacyguard/android/shizuku/ShizukuShellServiceTest.kt`
-   - Added unit test validating that all rollback commands (chain3, chain9, appops, standby-bucket, default-state) pass Shizuku shell allowlist validation.
+   - Added unit test validating that all rollback commands (chain3 package networking, chain9 uid removal, appops allow, standby-bucket active, pm default-state) pass Shizuku shell allowlist validation.
 
 ## 2. Manifest, Privileges & Attack Surface
 - No new Android permissions requested.

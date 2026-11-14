@@ -208,7 +208,12 @@ interface PolicyOpDao {
 
         val versionChanged = existing.versionCode != op.versionCode
         if (!versionChanged &&
-            existing.status in setOf(PolicyOp.STATUS_PENDING, PolicyOp.STATUS_APPLYING)
+            existing.status in setOf(
+                PolicyOp.STATUS_PENDING,
+                PolicyOp.STATUS_APPLYING,
+                PolicyOp.STATUS_APPLIED,
+                PolicyOp.STATUS_APPLIED_PARTIAL
+            )
         ) {
             return 0L
         }

@@ -100,10 +100,7 @@ class ShizukuShellServiceTest {
 
     @Test
     fun `test rollback commands accepted by allowlist`() {
-        // 1. Chain 3 reversal
-        assertNull(ShizukuShellService.validateCommand(
-            arrayOf("cmd", "connectivity", "set-chain3-enabled", "false")
-        ))
+        // 1. Chain 3 reversal (only re-enables package networking; does not toggle global chain3)
         assertNull(ShizukuShellService.validateCommand(
             arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", "com.example.app")
         ))

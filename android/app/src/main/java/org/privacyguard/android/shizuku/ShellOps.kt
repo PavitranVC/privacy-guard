@@ -261,11 +261,11 @@ object ShellOps {
         if (splitTargets.isEmpty()) return emptyList()
 
         val pm = context.packageManager
+        val flags = PackageManager.PackageInfoFlags.of(
+            (PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS or PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
+        )
         val pkgInfo = try {
-            pm.getPackageInfo(
-                packageName,
-                PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS
-            )
+            pm.getPackageInfo(packageName, flags)
         } catch (_: PackageManager.NameNotFoundException) {
             return emptyList()
         }

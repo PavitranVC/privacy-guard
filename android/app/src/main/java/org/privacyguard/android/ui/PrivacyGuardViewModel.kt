@@ -340,13 +340,13 @@ class PrivacyGuardViewModel(
 
             val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             if (opId == -1L) {
-                _statusMessage.value = "Blocked: previously rolled back after crash. Use 'Unlock & Retry' to override."
+                _statusMessage.value = "Operation locked due to prior crash rollback (ROLLED_BACK_UNSAFE) or database conflict. Use 'Unlock & Retry' to override."
                 return@launch
             } else if (opId == 0L) {
-                _statusMessage.value = "Operation already active or previously rolled back."
+                _statusMessage.value = "Operation is already active, queued, or previously rolled back by user."
                 return@launch
             }
-            _statusMessage.value = "Queued component disable for ${targetComponents.size} tracker components"
+            _statusMessage.value = "Queued component disable for ${targetComponents.size} tracker components (op #$opId)"
             shizukuManager.drainRunnableOps()
         }
     }
@@ -382,13 +382,13 @@ class PrivacyGuardViewModel(
 
             val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             if (opId == -1L) {
-                _statusMessage.value = "Blocked: previously rolled back after crash. Use 'Unlock & Retry' to override."
+                _statusMessage.value = "Operation locked due to prior crash rollback (ROLLED_BACK_UNSAFE) or database conflict. Use 'Unlock & Retry' to override."
                 return@launch
             } else if (opId == 0L) {
-                _statusMessage.value = "Operation already active or previously rolled back."
+                _statusMessage.value = "Operation is already active, queued, or previously rolled back by user."
                 return@launch
             }
-            _statusMessage.value = "Queued background network restrictions for $pkg"
+            _statusMessage.value = "Queued background network restrictions for $pkg (op #$opId)"
             shizukuManager.drainRunnableOps()
         }
     }

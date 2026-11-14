@@ -364,7 +364,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
 
         var overallSuccess = true
         for (op in opsToRollback) {
-            if (op.snapshot.isNullOrBlank() || op.snapshot == "{}") {
+            if (op.op == ShellOps.OP_ISOLATE_WIFI) {
                 if (op.status in setOf(
                         PolicyOp.STATUS_PENDING,
                         PolicyOp.STATUS_FAILED_TRANSIENT,
@@ -378,44 +378,56 @@ class ShizukuManager private constructor(private val appContext: Context) {
                     continue
                 }
 
-                if (op.op == ShellOps.OP_ISOLATE_WIFI) {
-                    val observed = op.observed ?: ""
-                    var reverted = false
-                    try {
-                        when {
-                            observed.contains("CHAIN3") -> {
-                                val r1 = exec(arrayOf("cmd", "connectivity", "set-chain3-enabled", "false"))
-                                val r2 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
-                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
-                            }
-                            observed.contains("CHAIN9") -> {
-                                val r1 = exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
-                                val r2 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
-                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
-                            }
-                            observed.contains("APPOPS") -> {
-                                val r1 = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                                val r2 = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
-                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
-                            }
-                            else -> {
-                                // Fallback: attempt reversal of all three methods
-                                val rNet = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
-                                val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                                val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
-                                reverted = (rNet.exitCode == 0 && rAppOps.exitCode == 0 && rBucket.exitCode == 0)
-                            }
+                val observed = op.observed.orEmpty()
+                var reverted = false
+                try {
+                    when {
+                        observed.startsWith("CHAIN3_PACKAGE_NETWORKING") -> {
+                            val r = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                            reverted = (r.exitCode == 0)
                         }
-                    } catch (_: Throwable) {
-                        reverted = false
+                        observed.startsWith("CHAIN9_BINDER_FIREWALL") -> {
+                            val r = exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
+                            reverted = (r.exitCode == 0)
+                        }
+                        observed.startsWith("APPOPS_STANDBY_RESTRICTED") -> {
+                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                            reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
+                        }
+                        else -> {
+                            // observed blank or unrecognized: run all three, success if the appops + bucket commands exit 0
+                            exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                            exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
+                            val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                            val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                            reverted = (rAppOps.exitCode == 0 && rBucket.exitCode == 0)
+                        }
                     }
+                } catch (_: Throwable) {
+                    reverted = false
+                }
 
-                    if (reverted) {
-                        val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
-                        if (rows != 1) {
-                            overallSuccess = false
-                        }
-                    } else {
+                if (reverted) {
+                    val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
+                    if (rows != 1) {
+                        overallSuccess = false
+                    }
+                } else {
+                    overallSuccess = false
+                }
+                continue
+            }
+
+            if (op.snapshot.isNullOrBlank() || op.snapshot == "{}") {
+                if (op.status in setOf(
+                        PolicyOp.STATUS_PENDING,
+                        PolicyOp.STATUS_FAILED_TRANSIENT,
+                        PolicyOp.STATUS_APPLYING
+                    )
+                ) {
+                    val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
+                    if (rows != 1) {
                         overallSuccess = false
                     }
                 } else {
