@@ -74,9 +74,9 @@ class CrashWatchdogWorker(
                 restoreSnapshotViaShell(shizuku, op.pkg, op.snapshot)
             }
             if (restored) {
-                val freshOp = db.policyOpDao().getById(op.id)
-                if (freshOp != null) {
-                    db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
+                val marked = safeMarkRolledBackUnsafe(db, op.id, op.gen)
+                if (!marked) {
+                    return if (runAttemptCount < 4) Result.retry() else Result.failure()
                 }
                 return Result.success()
             } else {
@@ -84,10 +84,7 @@ class CrashWatchdogWorker(
                     return Result.retry()
                 } else {
                     Log.e(TAG, "Snapshot restore retries exhausted after crash for ${op.pkg}. Locking as ROLLED_BACK_UNSAFE.")
-                    val freshOp = db.policyOpDao().getById(op.id)
-                    if (freshOp != null) {
-                        db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
-                    }
+                    safeMarkRolledBackUnsafe(db, op.id, op.gen)
                     return Result.failure()
                 }
             }
@@ -156,6 +153,33 @@ class CrashWatchdogWorker(
         } catch (_: Throwable) {
             false
         }
+    }
+
+    private suspend fun safeMarkRolledBackUnsafe(
+        db: AppDatabase,
+        opId: Long,
+        initialGen: Long
+    ): Boolean {
+        var rows = db.policyOpDao().markRolledBackUnsafe(opId, initialGen)
+        if (rows == 1) return true
+
+        // Gen race detected: re-read from DB
+        val freshOp = db.policyOpDao().getById(opId) ?: return false
+        val mutableStates = setOf(
+            PolicyOp.STATUS_APPLIED,
+            PolicyOp.STATUS_APPLIED_PARTIAL,
+            PolicyOp.STATUS_APPLYING
+        )
+        if (freshOp.status in mutableStates) {
+            rows = db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
+            if (rows == 1) return true
+        } else {
+            Log.w(TAG, "Op $opId no longer in mutable state during rollback lock (status=${freshOp.status})")
+            return false
+        }
+
+        Log.e(TAG, "Failed to mark op $opId as ROLLED_BACK_UNSAFE after retry (rows=$rows)")
+        return false
     }
 
     companion object {
