@@ -503,6 +503,8 @@ object ShellOps {
             if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
                 return NetworkIsolationOutcome(IsolationResult.APPOPS_PARTIAL, formattedStatus)
             }
+        } catch (e: ConcurrentMutationException) {
+            throw e
         } catch (e: SecurityException) {
             throw e
         } catch (e: DeadObjectException) {
