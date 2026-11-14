@@ -145,7 +145,7 @@ BUILD SUCCESSFUL in 12s
 - Purely on-device static analysis, Room state machine, and Shizuku shell policy execution.
 
 ## 4. Release Build & On-Device Verification
-- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (26 tests passed across all suites).
+- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (see Gradle output).
 - `./gradlew testReleaseUnitTest assembleRelease`: **BUILD SUCCESSFUL** (in 59s, R8 full mode, 16 KB page-aligned native libs).
 - `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).
 - Native C++ files untouched.
@@ -227,3 +227,17 @@ BUILD SUCCESSFUL in 12s
 
 ### Known limitation (reported, pending verification)
 On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --user 0 <pkg>/<component>` as shell UID fails with "SecurityException: Shell cannot change component state ... to 3", so disable_components ends FAILED_PERMANENT on that target. isolate_wifi (CHAIN3_PACKAGE_NETWORKING) apply and rollback worked. Component-disable, snapshot restore and crash watchdog have NOT been verified on hardware. A follow-up adb experiment will determine which states the shell may set.
+
+## Milestone M3.5-G (rollback fidelity, capability gating, privacy primitives)
+- Item 1: rollback preserves prior standby bucket and AppOps RUN_ANY_IN_BACKGROUND; settable-bucket validation; ShizukuShellService allows get-standby-bucket.
+- Item 2: capability "pm_component_state_shell"; UI greys out "Disable Tracker Components" with "Not supported on this device without root" when false; catch records denial and marks op SHELL_COMPONENT_STATE_DENIED.
+- Item 3: capability "connectivity_chain9"; ladder step 2 skipped when false; "Unknown command: oem_deny_3" records false and falls through to step 3; rollback tolerates "Unknown command" on remove.
+
+### On-device findings (Moto G54, Android 15, 2026-11-14)
+- 48/48 component cells denied by system server (SecurityException: Shell cannot change component state ... to 3).
+- Debuggable test app also denied (same error, proved not a release-build artifact).
+- Whole-package control (pm disable-user / enable) works as shell.
+- Chain 3 per-package networking works (set-chain3-enabled + set-package-networking-enabled).
+- Chain 9 (oem_deny_3) is an unknown command on this device.
+- Standby bucket values 10, 20, 30, 40, 45, 50 settable; 5 rejected by system server.
+- AppOps RUN_ANY_IN_BACKGROUND round-trips: mode "allow" removes the explicit override and restores baseline text.

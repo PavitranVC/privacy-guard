@@ -1,0 +1,5 @@
+ro.product.model = moto g54 5G
+ro.build.version.sdk = 35
+ro.build.version.release = 15
+ro.build.version.security_patch = 2026-09-01
+ro.build.fingerprint = motorola/cancunf_g_sysq/cancunf:15/V1TDS35H.83-20-5-14/24971a-330658:user/release-keys
