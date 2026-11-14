@@ -112,3 +112,67 @@ Execute the comprehensive security, state-machine, and sandbox hardening pass ac
 1. Run `.\gradlew.bat testReleaseUnitTest assembleRelease --stacktrace`.
 2. Run `zipalign -c -P 16 -v 4` on `app-release.apk` (or unsigned release APK) and `llvm-readobj -l` on `libprivacyguard_scan.so`.
 3. Output `walkthrough.md`.
+
+---
+
+## Proposed: androidTest dependencies (AWAITING USER APPROVAL)
+
+### 1. Proposed `android/gradle/libs.versions.toml` Entries
+Under `[versions]`:
+```toml
+androidx-test-runner = "1.6.2"
+androidx-test-ext-junit = "1.2.1"
+```
+
+Under `[libraries]`:
+```toml
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
+```
+
+### 2. Proposed `android/app/build.gradle.kts` Lines
+Under `dependencies { ... }`:
+```kotlin
+    // On-Device Instrumentation Testing
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+```
+
+### 3. Instrumentation Runner Class
+Configured in `defaultConfig`:
+`testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"` (already declared in `android/app/build.gradle.kts` line 60).
+
+### 4. Manual Run Flow (Preserving Shizuku Grants & App State)
+Do NOT use `./gradlew connectedAndroidTest` (which wipes application data and revokes user-granted Shizuku permissions).
+Instead, follow this manual deployment and execution flow:
+1. Build debug and test APKs:
+   ```powershell
+   cd android ; .\gradlew.bat assembleDebug assembleDebugAndroidTest
+   ```
+2. Reinstall application APK without wiping permissions/data (`-r`):
+   ```powershell
+   & $ADB install -r android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+3. Install test APK with test permission (`-r -t`):
+   ```powershell
+   & $ADB install -r -t android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+   ```
+4. Run instrumentation tests inside the app process (inheriting the user's Shizuku binder grant):
+   ```powershell
+   & $ADB shell am instrument -w -e class org.privacyguard.android.shizuku.AppPathIsolationTest org.privacyguard.android.test/androidx.test.runner.AndroidJUnitRunner
+   ```
+5. Teardown: Uninstall ONLY the test instrumentation package, NEVER the main app:
+   ```powershell
+   & $ADB uninstall org.privacyguard.android.test
+   ```
+
+### 5. On-Device Test Scenarios (S1–S5)
+- **S1 (Rare / Ignore):** Prior bucket `rare` (40) + appops `ignore` -> isolate -> rollback must give 40 / `ignore`.
+- **S2 (Baseline / Allow):** Default prior (`10` / `active`, no override) -> isolate -> rollback must give 10 and baseline text `"No operations. Default mode: allow"`.
+- **S3 (Frequent / Deny - Audit G1):** Prior bucket `frequent` (30) + appops `deny` -> isolate -> rollback must give 30 / `deny`.
+- **S4 (State Mutation Re-Apply - Audit G2):** Default prior -> isolate -> rollback -> set bucket `40` and appops `ignore` by hand -> isolate again -> rollback must give 40 / `ignore`, NOT 10 / `allow`.
+- **S5 (Never / Restricted):** Prior bucket `never` (50) -> isolate -> rollback must give 50. If OS refuses to assign bucket 50 during setup, report the raw error and skip gracefully.
+
+### 6. Operational Risks & Invariants
+- **NEVER use `./gradlew connectedAndroidTest`:** Gradle's built-in target executes `pm uninstall` before installing test artifacts, destroying Shizuku pairing tokens, user-granted binder authorization, and Room database records.
+- **Capability Row Cleanup:** Ensure any capability probe overrides or test policy rows injected into Room during hardware instrumentation runs are cleaned up or isolated to test package identifiers (`com.ansangha.drdriving`, etc.), leaving zero orphaned policy rows.
