@@ -66,6 +66,7 @@ object ShellOps {
         }.getOrDefault(false)
     }
 
+    /** Gate for future debloat module; intentionally not wired yet. */
     fun isProtectedForDebloat(context: Context, pkg: String): Boolean {
         if (pkg == context.packageName || isCoreProtectedPackage(pkg) || isDynamicUpiOrPaymentApp(context, pkg)) {
             return true

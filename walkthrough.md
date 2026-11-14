@@ -162,7 +162,7 @@ BUILD SUCCESSFUL in 12s
    - In `AlertDialog` confirm button: finds all ops in `ops` with `STATUS_ROLLED_BACK_UNSAFE` and invokes `onUnlockAndRetry(app.pkg, it.op)` for each (falling back to `OP_DISABLE_COMPONENTS`).
 3. `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`
    - Added `isDynamicUpiOrPaymentApp(context, pkg)`: dynamically queries `ACTION_VIEW` for `upi://pay` to protect any installed UPI application from mutations.
-   - Added `isProtectedForDebloat(context, pkg)`: gates debloat actions while permitting OEM system bloat disabling by protecting core packages, UPI apps, home/launcher, SMS, dialer, WebView, and non-updated Android system packages.
+   - Added `isProtectedForDebloat(context, pkg)`: intentional scaffolding for a future debloat module, NOT currently wired into disableManifestComponents or isolatePackageNetworking (component disablement and Wi-Fi isolation rely on isSafeListed, which is wired). Protects core packages, UPI apps, home/launcher, SMS, dialer, WebView, and non-updated Android system packages.
    - Preserved `isSafeListed(context, pkg, componentName: String? = null)` signature and added `isDynamicUpiOrPaymentApp(context, pkg)` check.
 4. `android/app/src/main/java/org/privacyguard/android/shield/ShieldProbe.kt`
    - Added `TunnelStatus.INCONCLUSIVE`.
