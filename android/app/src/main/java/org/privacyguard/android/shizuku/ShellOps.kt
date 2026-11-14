@@ -406,23 +406,31 @@ object ShellOps {
 
         val mutatedSoFar = mutableListOf<String>()
 
-        for (comp in effective) {
-            val componentName = ComponentName(pkg, comp)
-            val res = shellService.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
-            checkSecurityDenial(res.stderr)
-            if (res.exitCode != 0) {
-                rollbackComponents(shellService, pkg, userId, mutatedSoFar)
-                throw IllegalStateException("pm disable-user failed for $comp: ${res.stderr}")
-            }
-            mutatedSoFar.add(comp)
+        try {
+            for (comp in effective) {
+                val componentName = ComponentName(pkg, comp)
+                val res = shellService.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
+                checkSecurityDenial(res.stderr)
+                if (res.exitCode != 0) {
+                    rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                    mutatedSoFar.clear()
+                    throw IllegalStateException("pm disable-user failed for $comp: ${res.stderr}")
+                }
+                mutatedSoFar.add(comp)
 
-            val observedState = pm.getComponentEnabledSetting(componentName)
-            if (observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
-                observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            ) {
-                rollbackComponents(shellService, pkg, userId, mutatedSoFar)
-                throw IllegalStateException("Read-back verification mismatch on $comp: observed=$observedState")
+                val observedState = pm.getComponentEnabledSetting(componentName)
+                if (observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
+                    observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                ) {
+                    rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                    mutatedSoFar.clear()
+                    throw IllegalStateException("Read-back verification mismatch on $comp: observed=$observedState")
+                }
             }
+        } catch (t: Throwable) {
+            rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+            mutatedSoFar.clear()
+            throw t
         }
     }
 
@@ -441,8 +449,17 @@ object ShellOps {
         for (comp in components) {
             try {
                 val componentName = ComponentName(pkg, comp)
-                shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
-            } catch (_: Throwable) {}
+                val res = shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
+                if (res.exitCode != 0) {
+                    try {
+                        Log.w(TAG, "Failed to restore default-state for $comp: exit=${res.exitCode}, stderr=${res.stderr}")
+                    } catch (_: Throwable) {}
+                }
+            } catch (t: Throwable) {
+                try {
+                    Log.w(TAG, "Exception during rollback of $comp: ${t.message}")
+                } catch (_: Throwable) {}
+            }
         }
     }
 

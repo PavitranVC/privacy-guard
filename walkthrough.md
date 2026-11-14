@@ -200,3 +200,30 @@ BUILD SUCCESSFUL in 12s
 - `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (29 tests passed across all 4 suites).
 - `./gradlew assembleRelease`: **BUILD SUCCESSFUL** in 1m 5s (R8 full mode).
 - `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).
+
+## Milestone M3.5-C / M3.5-D / M3.5-E
+
+### Milestone M3.5-C (Commits 099f6ba..6c0c0ca)
+- **Item 1 (`099f6ba`):** Replaced fabricated test fixture with genuine device captures (`moto_g54_sdk35_exit_info.txt`, `moto_g54_sdk35_exit_info_crash.txt`) and dynamically derived timestamps in `android/app/src/test/java/org/privacyguard/android/work/CrashWatchdogParsingTest.kt`.
+- **Item 2 (`666bf49`):** Enforced pre-mutation component count check, snapshot merging with existing snapshots, and target count verification in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt` and `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuManager.kt`.
+- **Item 3 (`6337b97`):** Added OSINT poison-pill protection with strict status mapping (`Success`, `Retry`, `Unreachable`, `Invalid`) in `android/app/src/main/java/org/privacyguard/android/osint/OllamaClient.kt` and `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`.
+- **Item 4 (`59f51b1`):** Added Google Play Services APK signature scheme v3 rotated cert to trusted publisher gate in `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt` and `android/app/src/test/java/org/privacyguard/android/osint/TrustedPublisherTest.kt`.
+- **Item 5 (`5e661e4`):** Separated debloat protection gate (`isProtectedForDebloat`) from runtime component mutation gate in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`.
+- **Item 6 (`ac73e10`):** Added `MATCH_DEFAULT_ONLY` flag to UPI `upi://pay` intent resolution query in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`.
+- **Item 7 (`b9fca4b`):** Guarded watchdog generation race using optimistic locking (`WHERE id = :id AND gen = :gen`) in `android/app/src/main/java/org/privacyguard/android/work/CrashWatchdogWorker.kt`.
+- **Item 8 (`60fab7f`):** Decoupled drift check scheduling from package scan worker in `android/app/src/main/java/org/privacyguard/android/trigger/ReconciliationCoordinator.kt`.
+- **Item 9 (`6c0c0ca`):** Replaced triple HTTP probe with single-pass dual-stack leak classification and handled `TunnelStatus.INCONCLUSIVE` in `android/app/src/main/java/org/privacyguard/android/shield/ShieldProbe.kt` and `android/app/src/test/java/org/privacyguard/android/shield/ShieldProbeTest.kt`.
+
+### Milestone M3.5-D (Commit bd4aad2)
+- Added 4xx/5xx status handling in `android/app/src/main/java/org/privacyguard/android/osint/OllamaClient.kt` (treating 404/408/429 and $\ge 500$ as retryable `Unreachable`, 400 and invalid bodies as `Invalid`).
+- Removed 4 unverified publisher pins (`org.fdroid.fdroid`, `org.mozilla.firefox`, `com.duckduckgo.mobile.android`, `org.thoughtcrime.securesms`), retaining only `com.google.android.gms` in `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`.
+- Fixed retry off-by-one (`runAttemptCount < 2`, guard $\ge 3$) in `android/app/src/main/java/org/privacyguard/android/osint/OsintClassifierWorker.kt`.
+- Deleted unused `queryClassification` from `android/app/src/main/java/org/privacyguard/android/osint/OllamaClient.kt`.
+- Added missing unit tests for `mergeSnapshots` with `"{}"` in `android/app/src/test/java/org/privacyguard/android/shizuku/ShellOpsSnapshotTest.kt` and `classifyTunnel` IPv4-differs + IPv6-vpn-only in `android/app/src/test/java/org/privacyguard/android/shield/ShieldProbeTest.kt`.
+
+### Milestone M3.5-E (Current Change)
+- Wrapped component disable loop in `try { ... } catch (t: Throwable)` in `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt` to ensure `mutatedSoFar` is rolled back via `rollbackComponents` on any `SecurityException` or failure, clearing `mutatedSoFar` to prevent double-rollback.
+- Added `Log.w` per failed component in `rollbackComponents` without throwing.
+
+### Known limitation (reported, pending verification)
+On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --user 0 <pkg>/<component>` as shell UID fails with "SecurityException: Shell cannot change component state ... to 3", so disable_components ends FAILED_PERMANENT on that target. isolate_wifi (CHAIN3_PACKAGE_NETWORKING) apply and rollback worked. Component-disable, snapshot restore and crash watchdog have NOT been verified on hardware. A follow-up adb experiment will determine which states the shell may set.
