@@ -36,15 +36,6 @@ class CrashWatchdogWorker(
             return Result.success()
         }
 
-        if (runAttemptCount >= 5) {
-            val freshOp = db.policyOpDao().getById(policyOpId)
-            if (freshOp != null && (freshOp.status == PolicyOp.STATUS_APPLIED || freshOp.status == PolicyOp.STATUS_APPLIED_PARTIAL)) {
-                Log.w(TAG, "Watchdog retries exhausted for ${freshOp.pkg}. Transitioning to DRIFT.")
-                db.policyOpDao().markDriftPending(freshOp.id, freshOp.gen)
-            }
-            return Result.failure()
-        }
-
         val shizuku = ShizukuManager.getInstance(applicationContext)
         if (!shizuku.isReady()) {
             if (runAttemptCount >= 4) {
@@ -87,8 +78,18 @@ class CrashWatchdogWorker(
                 if (freshOp != null) {
                     db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
                 }
+                return Result.success()
             } else {
-                return Result.retry()
+                if (runAttemptCount < 4) {
+                    return Result.retry()
+                } else {
+                    Log.e(TAG, "Snapshot restore retries exhausted after crash for ${op.pkg}. Locking as ROLLED_BACK_UNSAFE.")
+                    val freshOp = db.policyOpDao().getById(op.id)
+                    if (freshOp != null) {
+                        db.policyOpDao().markRolledBackUnsafe(freshOp.id, freshOp.gen)
+                    }
+                    return Result.failure()
+                }
             }
         }
 

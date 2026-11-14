@@ -43,7 +43,8 @@ class MainActivity : ComponentActivity() {
                         onBack = { viewModel.selectPackage(null) },
                         onDisableTrackers = { pkg -> viewModel.disableTrackerComponents(pkg) },
                         onRestrictBackground = { pkg -> viewModel.restrictBackgroundNetworking(pkg) },
-                        onRollback = { pkg -> viewModel.rollbackPackage(pkg) }
+                        onRollback = { pkg -> viewModel.rollbackPackage(pkg) },
+                        onUnlockAndRetry = { pkg, op -> viewModel.unlockAndRetryPolicyOp(pkg, op) }
                     )
                 } else {
                     MainOverviewScreen(

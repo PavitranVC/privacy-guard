@@ -365,23 +365,61 @@ class ShizukuManager private constructor(private val appContext: Context) {
         var overallSuccess = true
         for (op in opsToRollback) {
             if (op.snapshot.isNullOrBlank() || op.snapshot == "{}") {
-                if (op.status == PolicyOp.STATUS_PENDING) {
-                    db.policyOpDao().markSuperseded(op.id, op.gen)
-                    continue
-                }
-                if (op.op == "isolate_wifi") {
-                    try {
-                        val r1 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
-                        val r2 = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
-                        val r3 = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
-                        if (r1.exitCode == 0 && r2.exitCode == 0 && r3.exitCode == 0) {
-                            db.policyOpDao().markSuperseded(op.id, op.gen)
-                        } else {
-                            overallSuccess = false
-                        }
-                    } catch (_: Throwable) {
+                if (op.status in setOf(
+                        PolicyOp.STATUS_PENDING,
+                        PolicyOp.STATUS_FAILED_TRANSIENT,
+                        PolicyOp.STATUS_APPLYING
+                    )
+                ) {
+                    val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
+                    if (rows != 1) {
                         overallSuccess = false
                     }
+                    continue
+                }
+
+                if (op.op == ShellOps.OP_ISOLATE_WIFI) {
+                    val observed = op.observed ?: ""
+                    var reverted = false
+                    try {
+                        when {
+                            observed.contains("CHAIN3") -> {
+                                val r1 = exec(arrayOf("cmd", "connectivity", "set-chain3-enabled", "false"))
+                                val r2 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
+                            }
+                            observed.contains("CHAIN9") -> {
+                                val r1 = exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
+                                val r2 = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
+                            }
+                            observed.contains("APPOPS") -> {
+                                val r1 = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                                val r2 = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                                reverted = (r1.exitCode == 0 && r2.exitCode == 0)
+                            }
+                            else -> {
+                                // Fallback: attempt reversal of all three methods
+                                val rNet = exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", pkg))
+                                val rAppOps = exec(arrayOf("cmd", "appops", "set", "--uid", appInfo.uid.toString(), "RUN_ANY_IN_BACKGROUND", "allow"))
+                                val rBucket = exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "active"))
+                                reverted = (rNet.exitCode == 0 && rAppOps.exitCode == 0 && rBucket.exitCode == 0)
+                            }
+                        }
+                    } catch (_: Throwable) {
+                        reverted = false
+                    }
+
+                    if (reverted) {
+                        val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
+                        if (rows != 1) {
+                            overallSuccess = false
+                        }
+                    } else {
+                        overallSuccess = false
+                    }
+                } else {
+                    overallSuccess = false
                 }
                 continue
             }
@@ -414,7 +452,10 @@ class ShizukuManager private constructor(private val appContext: Context) {
                 }
 
                 if (opRestored) {
-                    db.policyOpDao().markSuperseded(op.id, op.gen)
+                    val rows = db.policyOpDao().markSuperseded(op.id, op.gen)
+                    if (rows != 1) {
+                        overallSuccess = false
+                    }
                 } else {
                     overallSuccess = false
                 }

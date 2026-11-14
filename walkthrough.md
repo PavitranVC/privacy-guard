@@ -98,4 +98,49 @@ BUILD SUCCESSFUL in 12s
   (This is an expected standard Android SDK deprecation note on `allNetworks`; no compiler errors).
 - Zero other compiler warnings or errors.
 - Schema version maintained at v3 with zero entity column modifications.
+
+---
+
+# Walkthrough: Milestone M3.5-A — State-Machine, Drift Loop, Rollback & Watchdog Remediation
+
+## 1. Files Created/Modified
+
+1. `android/app/src/main/java/org/privacyguard/android/shizuku/ShellOps.kt`
+   - Added `effectiveTargets(context, packageName, rawTargets)` helper: parses comma-delimited component lists, queries `PackageManager` strictly for declared services and broadcast receivers (excluding content providers and activities), guards accessibility and notification listener services, and filters out safe-listed components.
+   - Refactored `createPreMutationSnapshot` and `disableManifestComponents` to use `effectiveTargets`.
+2. `android/app/src/main/java/org/privacyguard/android/ui/PrivacyGuardViewModel.kt`
+   - In `disableTrackerComponents`: removed content providers from candidate target gathering; invokes `ShellOps.effectiveTargets` and stops early with status message if no mutable services/receivers exist.
+   - Evaluates `upsertPreservingSnapshotAndGen` return codes: `-1L` surfaces crash rollback lock, `0L` notifies operation is already active or user-rolled back, `> 0L` proceeds with execution.
+3. `android/app/src/main/java/org/privacyguard/android/trigger/ReconciliationCoordinator.kt`
+   - In `isOpDrifted`: resolves comma-delimited targets via `ShellOps.effectiveTargets` and checks enabled state on individual components (preventing false drift loops).
+   - In `processPending`: removed periodic auto-re-queueing of `FAILED_TRANSIENT` and `FAILED_PERMANENT` ops during regular scans.
+   - In `handlePackageReplaced`: queries live `PackageInfo` for updated `versionCode` and `lastUpdateTime`, filters ops strictly excluding `SUPERSEDED`, and passes `packageReplaced = true`.
+4. `android/app/src/main/java/org/privacyguard/android/shizuku/ShizukuManager.kt`
+   - In `rollbackPackage`: implemented method-aware `isolate_wifi` reversal based on `op.observed` (`"CHAIN3"`, `"CHAIN9"`, `"APPOPS"`, or fallback); handles blank-snapshot ops by superseding `PENDING`, `APPLYING`, or `FAILED_TRANSIENT` ops; validates `markSuperseded` returned rows (`rows == 1`).
+5. `android/app/src/main/java/org/privacyguard/android/work/CrashWatchdogWorker.kt`
+   - In `doWork`: if a process crash is detected within 60s and snapshot restore retries are exhausted (`runAttemptCount >= 4`), transitions op to `markRolledBackUnsafe` (never `markDriftPending`) to prevent infinite crash loops.
+6. `android/app/src/main/java/org/privacyguard/android/data/dao/PolicyOpDao.kt`
+   - Cleaned `unlockRolledBackUnsafe` signature and query (removed redundant `:now = :now`).
+   - In `upsertPreservingSnapshotAndGen`: protects `SUPERSEDED` ops with `errClass == "ROLLED_BACK_BY_USER"` from auto-revival unless `userInitiated = true`; returns `0L` when already `PENDING` or `APPLYING`.
+7. `android/app/src/main/java/org/privacyguard/android/ui/AppDetailScreen.kt`
+   - Added `onUnlockAndRetry: (String, String) -> Unit` parameter.
+   - Rendered `"Unlock & Retry"` button in the `hasUnsafeRollback` warning banner with a confirmation `AlertDialog` ("Override Crash Protection?").
+8. `android/app/src/main/java/org/privacyguard/android/ui/MainActivity.kt`
+   - Wired `onUnlockAndRetry = { pkg, op -> viewModel.unlockAndRetryPolicyOp(pkg, op) }` into `AppDetailScreen`.
+9. `android/app/src/test/java/org/privacyguard/android/shizuku/ShizukuShellServiceTest.kt`
+   - Added unit test validating that all rollback commands (chain3, chain9, appops, standby-bucket, default-state) pass Shizuku shell allowlist validation.
+
+## 2. Manifest, Privileges & Attack Surface
+- No new Android permissions requested.
+- Exported components remain strictly zero except the launcher `MainActivity` and `ShizukuProvider` (`android.permission.INTERACT_ACROSS_USERS_FULL`).
+- Shizuku shell commands strictly gated by prefix and subcommand allowlists in `ShizukuShellService`.
+
+## 3. Outbound Network & Privacy Audit
+- Outbound endpoints touched: None.
+- Purely on-device static analysis, Room state machine, and Shizuku shell policy execution.
+
+## 4. Release Build & On-Device Verification
+- `./gradlew testDebugUnitTest`: **BUILD SUCCESSFUL** (26 tests passed across all suites).
+- `./gradlew testReleaseUnitTest assembleRelease`: **BUILD SUCCESSFUL** (in 59s, R8 full mode, 16 KB page-aligned native libs).
+- `zipalign -c -P 16 -v 4 app-release.apk`: **Verification succesful** (16 KB page alignment confirmed).
 - Native C++ files untouched.

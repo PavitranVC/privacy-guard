@@ -194,7 +194,7 @@ object ReconciliationCoordinator {
                     )
                     db.appScanResultDao().upsert(scanResult)
 
-                    // Drift check and failed-op re-queue on existing ops for package
+                    // Drift check on applied ops for package
                     val appliedOps = db.policyOpDao().getByPackage(req.pkg)
                     for (op in appliedOps) {
                         if (op.status == PolicyOp.STATUS_APPLIED || op.status == PolicyOp.STATUS_APPLIED_PARTIAL) {
@@ -202,9 +202,6 @@ object ReconciliationCoordinator {
                                 Log.w(TAG, "PolicyOp drifted for pkg=${req.pkg}, op=${op.op}, target=${op.target}")
                                 db.policyOpDao().markDriftPending(op.id, op.gen)
                             }
-                        } else if (op.status in setOf(PolicyOp.STATUS_FAILED_TRANSIENT, PolicyOp.STATUS_FAILED_PERMANENT)) {
-                            // Re-queue same-version failed ops on package update/reinstall
-                            db.policyOpDao().upsertPreservingSnapshotAndGen(op, packageReplaced = true)
                         }
                     }
                 }
@@ -230,16 +227,24 @@ object ReconciliationCoordinator {
 
     private fun isOpDrifted(context: Context, op: PolicyOp): Boolean {
         if (op.op == ShellOps.OP_DISABLE_COMPONENTS) {
-            val cn = ComponentName(op.pkg, op.target)
-            val state = try {
-                context.packageManager.getComponentEnabledSetting(cn)
-            } catch (_: Throwable) {
-                PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+            val targets = ShellOps.effectiveTargets(context, op.pkg, op.target.split(","))
+            if (targets.isEmpty()) return false
+            val pm = context.packageManager
+            for (comp in targets) {
+                val cn = ComponentName(op.pkg, comp)
+                val state = try {
+                    pm.getComponentEnabledSetting(cn)
+                } catch (_: Throwable) {
+                    PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                }
+                val isCurrentlyDisabled = (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                        state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                val desiredDisabled = op.desired == ShellOps.DESIRED_DISABLED
+                if (desiredDisabled != isCurrentlyDisabled) {
+                    return true
+                }
             }
-            val isCurrentlyDisabled = (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
-                    state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
-            val desiredDisabled = op.desired == ShellOps.DESIRED_DISABLED
-            return desiredDisabled != isCurrentlyDisabled
+            return false
         }
         return false
     }
@@ -264,15 +269,32 @@ object ReconciliationCoordinator {
 
     suspend fun handlePackageReplaced(context: Context, pkg: String) {
         val db = AppDatabase.getInstance(context)
+        val pm = context.packageManager
+        val pkgInfo = try {
+            pm.getPackageInfo(pkg, 0)
+        } catch (_: Throwable) {
+            null
+        }
+
         val existingOps = db.policyOpDao().getByPackage(pkg)
         for (op in existingOps) {
             if (op.status in setOf(
-                    PolicyOp.STATUS_SUPERSEDED,
+                    PolicyOp.STATUS_APPLIED,
+                    PolicyOp.STATUS_APPLIED_PARTIAL,
+                    PolicyOp.STATUS_DRIFT,
                     PolicyOp.STATUS_FAILED_PERMANENT,
                     PolicyOp.STATUS_FAILED_TRANSIENT
                 )
             ) {
-                db.policyOpDao().upsertPreservingSnapshotAndGen(op, packageReplaced = true)
+                val updatedOp = if (pkgInfo != null) {
+                    op.copy(
+                        versionCode = pkgInfo.longVersionCode,
+                        lastUpdateTime = pkgInfo.lastUpdateTime
+                    )
+                } else {
+                    op
+                }
+                db.policyOpDao().upsertPreservingSnapshotAndGen(updatedOp, packageReplaced = true)
             }
         }
         val now = System.currentTimeMillis()

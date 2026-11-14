@@ -242,19 +242,69 @@ object ShellOps {
         return IsolationResult.UNISOLATABLE_ON_WIFI
     }
 
+    /**
+     * Resolves raw targets (handling comma-joined lists or single class names) to declared services
+     * and broadcast receivers only, filtering out non-declared, provider/activity, accessibility,
+     * notification listener, and safe-listed components.
+     */
+    fun effectiveTargets(
+        context: Context,
+        packageName: String,
+        rawTargets: Collection<String>
+    ): List<String> {
+        val splitTargets = rawTargets
+            .flatMap { it.split(",") }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        if (splitTargets.isEmpty()) return emptyList()
+
+        val pm = context.packageManager
+        val pkgInfo = try {
+            pm.getPackageInfo(
+                packageName,
+                PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS
+            )
+        } catch (_: PackageManager.NameNotFoundException) {
+            return emptyList()
+        }
+
+        // Collect valid declared services, excluding accessibility & notification listener services
+        val validServices = pkgInfo.services?.filter { svc ->
+            svc.permission != "android.permission.BIND_ACCESSIBILITY_SERVICE" &&
+            svc.permission != "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+        }?.map { it.name }?.toSet() ?: emptySet()
+
+        // Collect valid declared receivers
+        val validReceivers = pkgInfo.receivers?.map { it.name }?.toSet() ?: emptySet()
+
+        val declaredValid = validServices + validReceivers
+        val dynamicProtected = queryProtectedMessagingComponents(context, packageName)
+
+        return splitTargets.mapNotNull { target ->
+            val className = if (target.contains("/")) target.substringAfter("/") else target
+            if (declaredValid.contains(className) &&
+                !isSafeListed(context, packageName, className) &&
+                !dynamicProtected.contains(className)
+            ) {
+                className
+            } else {
+                null
+            }
+        }.distinct()
+    }
+
     fun createPreMutationSnapshot(
         context: Context,
         pkg: String,
         targetComponents: List<String>
     ): String {
         val pm = context.packageManager
-        val dynamicProtected = queryProtectedMessagingComponents(context, pkg)
+        val effective = effectiveTargets(context, pkg, targetComponents)
         val snapshotMap = mutableMapOf<String, Int>()
 
-        for (comp in targetComponents) {
-            if (isSafeListed(context, pkg, comp) || dynamicProtected.contains(comp)) {
-                continue
-            }
+        for (comp in effective) {
             val componentName = ComponentName(pkg, comp)
             snapshotMap[comp] = pm.getComponentEnabledSetting(componentName)
         }
@@ -271,25 +321,18 @@ object ShellOps {
             throw IllegalArgumentException("Cannot disable components for protected package: $pkg")
         }
 
+        val effective = effectiveTargets(context, pkg, targetComponents)
+        if (effective.isEmpty()) {
+            return
+        }
+
         val pm = context.packageManager
-        val pkgInfo = pm.getPackageInfo(
-            pkg,
-            PackageManager.GET_SERVICES or PackageManager.GET_RECEIVERS
-        )
-
-        val declaredServices = pkgInfo.services?.map { it.name }?.toSet() ?: emptySet()
-        val declaredReceivers = pkgInfo.receivers?.map { it.name }?.toSet() ?: emptySet()
-        val declaredValid = declaredServices + declaredReceivers
-
-        val dynamicProtected = queryProtectedMessagingComponents(context, pkg)
-        val userId = (pkgInfo.applicationInfo?.uid ?: 0) / 100000
+        val appInfo = pm.getApplicationInfo(pkg, 0)
+        val userId = appInfo.uid / 100000
 
         val mutatedSoFar = mutableListOf<String>()
 
-        for (comp in targetComponents) {
-            if (!declaredValid.contains(comp)) continue
-            if (isSafeListed(context, pkg, comp) || dynamicProtected.contains(comp)) continue
-
+        for (comp in effective) {
             val componentName = ComponentName(pkg, comp)
             val res = shellService.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
             checkSecurityDenial(res.stderr)

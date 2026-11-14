@@ -97,4 +97,33 @@ class ShizukuShellServiceTest {
         )
         assertTrue(error!!.contains("Invalid component-only pm syntax"))
     }
+
+    @Test
+    fun `test rollback commands accepted by allowlist`() {
+        // 1. Chain 3 reversal
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "connectivity", "set-chain3-enabled", "false")
+        ))
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "connectivity", "set-package-networking-enabled", "true", "com.example.app")
+        ))
+
+        // 2. Chain 9 reversal
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "connectivity", "oem_deny_3", "remove", "10123")
+        ))
+
+        // 3. AppOps & standby bucket reversal
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "--uid", "10123", "RUN_ANY_IN_BACKGROUND", "allow")
+        ))
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("am", "set-standby-bucket", "--user", "0", "com.example.app", "active")
+        ))
+
+        // 4. PM default-state restoration
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "default-state", "--user", "0", "com.example.app/com.example.app.MyReceiver")
+        ))
+    }
 }

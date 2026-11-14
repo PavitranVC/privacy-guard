@@ -297,14 +297,14 @@ class PrivacyGuardViewModel(
                 null
             } ?: return@launch
 
-            val targetComponents = mutableListOf<String>()
+            val candidateComponents = mutableListOf<String>()
 
             fun checkAndAdd(name: String?) {
                 if (name == null) return
                 if (ShellOps.isSafeListed(getApplication(), pkg, name)) return
                 for (sig in trackerSignatures) {
                     if (name == sig || name.startsWith("$sig.")) {
-                        targetComponents.add(name)
+                        candidateComponents.add(name)
                         break
                     }
                 }
@@ -319,10 +319,10 @@ class PrivacyGuardViewModel(
                 }
             }
             pkgInfo.receivers?.forEach { checkAndAdd(it.name) }
-            pkgInfo.providers?.forEach { checkAndAdd(it.name) }
 
+            val targetComponents = ShellOps.effectiveTargets(getApplication(), pkg, candidateComponents)
             if (targetComponents.isEmpty()) {
-                _statusMessage.value = "No modifiable tracker components found in $pkg"
+                _statusMessage.value = "No mutable tracker services or receivers found in $pkg"
                 return@launch
             }
 
@@ -340,7 +340,10 @@ class PrivacyGuardViewModel(
 
             val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             if (opId == -1L) {
-                _statusMessage.value = "Operation locked: $pkg previously crashed when components were disabled (ROLLED_BACK_UNSAFE). Unlock before retrying."
+                _statusMessage.value = "Blocked: previously rolled back after crash. Use 'Unlock & Retry' to override."
+                return@launch
+            } else if (opId == 0L) {
+                _statusMessage.value = "Operation already active or previously rolled back."
                 return@launch
             }
             _statusMessage.value = "Queued component disable for ${targetComponents.size} tracker components"
@@ -379,7 +382,10 @@ class PrivacyGuardViewModel(
 
             val opId = database.policyOpDao().upsertPreservingSnapshotAndGen(op, userInitiated = true)
             if (opId == -1L) {
-                _statusMessage.value = "Operation locked: $pkg previously crashed under network isolation (ROLLED_BACK_UNSAFE). Unlock before retrying."
+                _statusMessage.value = "Blocked: previously rolled back after crash. Use 'Unlock & Retry' to override."
+                return@launch
+            } else if (opId == 0L) {
+                _statusMessage.value = "Operation already active or previously rolled back."
                 return@launch
             }
             _statusMessage.value = "Queued background network restrictions for $pkg"

@@ -165,9 +165,9 @@ interface PolicyOpDao {
             errClass = 'UNLOCKED_BY_USER',
             nextAt = 0,
             gen = gen + 1
-        WHERE pkg = :pkg AND op = :opType AND status = 'ROLLED_BACK_UNSAFE' AND :now = :now
+        WHERE pkg = :pkg AND op = :opType AND status = 'ROLLED_BACK_UNSAFE'
     """)
-    suspend fun unlockRolledBackUnsafe(pkg: String, opType: String, now: Long = System.currentTimeMillis()): Int
+    suspend fun unlockRolledBackUnsafe(pkg: String, opType: String): Int
 
     @Query("""
         UPDATE policy_op
@@ -197,7 +197,22 @@ interface PolicyOpDao {
         if (existing.status == PolicyOp.STATUS_ROLLED_BACK_UNSAFE) {
             return -1L
         }
+
+        // Protect manual user rollbacks from automatic revival on version change or package replace
+        if (existing.status == PolicyOp.STATUS_SUPERSEDED &&
+            existing.errClass == "ROLLED_BACK_BY_USER" &&
+            !userInitiated
+        ) {
+            return 0L
+        }
+
         val versionChanged = existing.versionCode != op.versionCode
+        if (!versionChanged &&
+            existing.status in setOf(PolicyOp.STATUS_PENDING, PolicyOp.STATUS_APPLYING)
+        ) {
+            return 0L
+        }
+
         if (versionChanged &&
             existing.status in listOf(
                 PolicyOp.STATUS_SUPERSEDED,
@@ -207,6 +222,7 @@ interface PolicyOpDao {
             )
         ) {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
+            return existing.id
         } else if (!versionChanged && (userInitiated || packageReplaced) &&
             existing.status in setOf(
                 PolicyOp.STATUS_SUPERSEDED,
@@ -215,6 +231,7 @@ interface PolicyOpDao {
             )
         ) {
             resetForNewVersion(existing.id, op.versionCode, op.lastUpdateTime)
+            return existing.id
         }
         return existing.id
     }

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -33,8 +34,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +55,7 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import org.privacyguard.android.data.entity.AppScanResult
 import org.privacyguard.android.data.entity.PolicyOp
+import org.privacyguard.android.shizuku.ShellOps
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -61,8 +68,38 @@ fun AppDetailScreen(
     onDisableTrackers: (String) -> Unit,
     onRestrictBackground: (String) -> Unit,
     onRollback: (String) -> Unit,
+    onUnlockAndRetry: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    var showUnlockDialog by remember { mutableStateOf(false) }
+
+    if (showUnlockDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnlockDialog = false },
+            title = { Text("Override Crash Protection?") },
+            text = {
+                Text(
+                    "This operation was previously rolled back because the target app crashed within 60 seconds of applying policy. " +
+                    "Retrying may cause ${app.pkg} to crash again.\n\nDo you want to unlock and re-apply this operation?"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUnlockDialog = false
+                        onUnlockAndRetry(app.pkg, ShellOps.OP_DISABLE_COMPONENTS)
+                    }
+                ) {
+                    Text("Unlock & Re-apply", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnlockDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
     val trackers: List<String> = try {
         Json.decodeFromString(ListSerializer(String.serializer()), app.matchedTrackersJson)
     } catch (_: Throwable) {
@@ -108,29 +145,43 @@ fun AppDetailScreen(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = Color(0xFFC62828),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "CrashWatchdog Auto-Restoration",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFC62828)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = Color(0xFFC62828),
+                                modifier = Modifier.size(24.dp)
                             )
-                            Text(
-                                text = "Component modifications caused process crash (exit code 4-7) within 60s. Component state was safely restored to prevent crashes.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFB71C1C)
-                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "CrashWatchdog Auto-Restoration",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFC62828)
+                                )
+                                Text(
+                                    text = "Component modifications caused process crash (exit code 4-7) within 60s. Component state was safely restored to prevent crashes.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFB71C1C)
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = { showUnlockDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFC62828),
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Unlock & Retry")
                         }
                     }
                 }
