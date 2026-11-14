@@ -26,6 +26,7 @@ object ShellOps {
     const val DESIRED_ISOLATED = "ISOLATED"
 
     const val CAPABILITY_PM_COMPONENT_STATE = "pm_component_state_shell"
+    const val CAPABILITY_CONNECTIVITY_CHAIN9 = "connectivity_chain9"
     const val ERR_SHELL_COMPONENT_STATE_DENIED = "SHELL_COMPONENT_STATE_DENIED"
 
     private const val TAG = "ShellOps"
@@ -232,6 +233,27 @@ object ShellOps {
         )
     }
 
+    fun isUnknownCommand(stdout: String?, stderr: String?): Boolean {
+        return (stdout?.contains("Unknown command", ignoreCase = true) == true) ||
+                (stderr?.contains("Unknown command", ignoreCase = true) == true)
+    }
+
+    suspend fun checkChain9Capability(
+        capabilityDao: CapabilityDao?,
+        fingerprint: String
+    ): Boolean {
+        return capabilityDao?.isSupported(CAPABILITY_CONNECTIVITY_CHAIN9, fingerprint) != false
+    }
+
+    suspend fun recordChain9Unsupported(
+        capabilityDao: CapabilityDao?,
+        fingerprint: String
+    ) {
+        capabilityDao?.upsert(
+            Capability(CAPABILITY_CONNECTIVITY_CHAIN9, false, fingerprint, System.currentTimeMillis())
+        )
+    }
+
     fun isSafeListed(context: Context, pkg: String, componentName: String? = null): Boolean {
         if (pkg == context.packageName) return true
         if (isCoreProtectedPackage(pkg) || isDynamicUpiOrPaymentApp(context, pkg) || isSystemApp(context, pkg)) return true
@@ -349,20 +371,25 @@ object ShellOps {
         }
 
         // Ladder Step 2: Firewall chain 9 fallback via shell
-        try {
-            val r2 = shellService.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
-            checkSecurityDenial(r2.stderr)
-            if (r2.exitCode == 0) {
-                return NetworkIsolationOutcome(IsolationResult.CHAIN9_SUCCESS, IsolationResult.CHAIN9_SUCCESS.statusString)
+        if (checkChain9Capability(capabilityDao, fingerprint)) {
+            try {
+                val r2 = shellService.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
+                checkSecurityDenial(r2.stderr)
+                if (isUnknownCommand(r2.stdout, r2.stderr)) {
+                    recordChain9Unsupported(capabilityDao, fingerprint)
+                    Log.w(TAG, "Chain 9 unsupported on this device; recorded capability and skipping to step 3")
+                } else if (r2.exitCode == 0) {
+                    return NetworkIsolationOutcome(IsolationResult.CHAIN9_SUCCESS, IsolationResult.CHAIN9_SUCCESS.statusString)
+                }
+            } catch (e: SecurityException) {
+                throw e
+            } catch (e: DeadObjectException) {
+                throw e
+            } catch (e: RemoteException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "Ladder step 2 (chain9) failed", e)
             }
-        } catch (e: SecurityException) {
-            throw e
-        } catch (e: DeadObjectException) {
-            throw e
-        } catch (e: RemoteException) {
-            throw e
-        } catch (e: Throwable) {
-            Log.w(TAG, "Ladder step 2 (chain9) failed", e)
         }
 
         // Ladder Step 3: AppOps ignore + Standby bucket restricted

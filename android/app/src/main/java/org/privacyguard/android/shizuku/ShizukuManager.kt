@@ -404,7 +404,14 @@ class ShizukuManager private constructor(private val appContext: Context) {
                         }
                         observed.startsWith("CHAIN9_BINDER_FIREWALL") -> {
                             val r = exec(arrayOf("cmd", "connectivity", "oem_deny_3", "remove", appInfo.uid.toString()))
-                            reverted = (r.exitCode == 0)
+                            if (r.exitCode == 0) {
+                                reverted = true
+                            } else if (ShellOps.isUnknownCommand(r.stdout, r.stderr)) {
+                                Log.w(TAG, "Chain 9 remove returned 'Unknown command' (${r.stderr.trim()}); treating rollback as succeeded")
+                                reverted = true
+                            } else {
+                                reverted = false
+                            }
                         }
                         observed.startsWith("APPOPS_STANDBY_RESTRICTED") -> {
                             val priors = ShellOps.parsePriors(observed)
