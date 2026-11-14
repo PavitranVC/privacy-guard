@@ -1,11 +1,8 @@
 package org.privacyguard.android.work
 
-import android.app.ActivityManager
-import android.app.ApplicationExitInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -14,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.privacyguard.android.data.AppDatabase
 import org.privacyguard.android.data.entity.PolicyOp
+import org.privacyguard.android.shizuku.ShizukuManager
 
 class CrashWatchdogWorker(
     appContext: Context,
@@ -22,87 +20,96 @@ class CrashWatchdogWorker(
 
     override suspend fun doWork(): Result {
         val policyOpId = inputData.getLong(KEY_POLICY_OP_ID, -1L)
-        val pkg = inputData.getString(KEY_PKG) ?: return Result.failure()
-        val appliedAt = inputData.getLong(KEY_APPLIED_AT, System.currentTimeMillis() - 60_000L)
-        val snapshotJson = inputData.getString(KEY_SNAPSHOT)
+        val appliedAt = inputData.getLong(KEY_APPLIED_AT, -1L)
 
-        if (policyOpId == -1L) return Result.failure()
+        if (policyOpId == -1L || appliedAt == -1L) return Result.failure()
 
         val db = AppDatabase.getInstance(applicationContext)
         val op = db.policyOpDao().getById(policyOpId) ?: return Result.success()
 
-        // Only inspect if still in an applied/applying state
-        if (op.status != PolicyOp.STATUS_APPLIED && op.status != PolicyOp.STATUS_APPLYING) {
+        // Only inspect if still in APPLIED state
+        if (op.status != PolicyOp.STATUS_APPLIED) {
             return Result.success()
         }
 
-        val activityManager = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val shizuku = ShizukuManager.getInstance(applicationContext)
+        if (!shizuku.isReady()) {
+            return Result.retry()
+        }
+        val shellService = shizuku.getService() ?: return Result.retry()
+
+        // Query privileged exit reasons via dumpsys activity exit-info
+        val dumpsysResult = shellService.exec(arrayOf("dumpsys", "activity", "exit-info", op.pkg))
+        val dumpsysOut = dumpsysResult.stdout
+
         var crashDetected = false
         var crashDescription = ""
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && activityManager != null) {
-            try {
-                val exitReasons = activityManager.getHistoricalProcessExitReasons(pkg, 0, 15)
-                for (info in exitReasons) {
-                    if (info.timestamp >= appliedAt) {
-                        if (info.reason == ApplicationExitInfo.REASON_CRASH ||
-                            info.reason == ApplicationExitInfo.REASON_CRASH_NATIVE
+        if (dumpsysResult.exitCode == 0 && dumpsysOut.isNotBlank()) {
+            val lines = dumpsysOut.lines()
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith("timestamp=")) {
+                    val ts = trimmed.substringAfter("timestamp=").substringBefore(" ").toLongOrNull()
+                    if (ts != null && ts >= appliedAt && ts <= appliedAt + 60_000L) {
+                        // Check if reason is crash, native crash, ANR, or init failure
+                        if (dumpsysOut.contains("reason=CRASH", ignoreCase = true) ||
+                            dumpsysOut.contains("reason=USER REQUESTED", ignoreCase = false) ||
+                            dumpsysOut.contains("reason=CRASH_NATIVE", ignoreCase = true) ||
+                            dumpsysOut.contains("reason=ANR", ignoreCase = true) ||
+                            dumpsysOut.contains("reason=INITIALIZATION FAILURE", ignoreCase = true)
                         ) {
                             crashDetected = true
-                            crashDescription = "Crash detected: reason=${info.reason}, desc=${info.description}"
+                            crashDescription = "Crash observed post-apply: $trimmed"
                             break
                         }
                     }
                 }
-            } catch (e: Throwable) {
-                Log.e(TAG, "Failed reading process exit reasons for $pkg", e)
             }
         }
 
         if (crashDetected) {
-            Log.w(TAG, "Unsafe crash detected post-apply for $pkg: $crashDescription. Auto-rolling back.")
-            // Auto-restore snapshot
-            restoreSnapshot(pkg, snapshotJson)
-
-            db.policyOpDao().updateOptimistic(
-                id = op.id,
-                expectedGen = op.gen,
-                newStatus = PolicyOp.STATUS_ROLLED_BACK_UNSAFE,
-                observed = crashDescription,
-                errClass = "CRASH_60S_POST_APPLY",
-                attempts = op.attempts,
-                nextAt = 0,
-                snapshot = op.snapshot
-            )
+            Log.w(TAG, "Process crash detected within 60s window. Initiating rollback.")
+            val restored = restoreSnapshotViaShell(shellService, op.pkg, op.snapshot)
+            if (restored) {
+                db.policyOpDao().markRolledBackUnsafe(op.id, op.gen, crashDescription)
+            } else {
+                return Result.retry()
+            }
         }
 
         return Result.success()
     }
 
-    private fun restoreSnapshot(pkg: String, snapshotJson: String?) {
-        if (snapshotJson.isNullOrBlank()) return
-        try {
-            val jsonMap = Json.parseToJsonElement(snapshotJson).jsonObject
+    private fun restoreSnapshotViaShell(
+        shellService: org.privacyguard.android.service.IShellService,
+        pkg: String,
+        snapshotJson: String?
+    ): Boolean {
+        if (snapshotJson.isNullOrBlank()) return true
+        return try {
             val pm = applicationContext.packageManager
-            for ((componentNameStr, stateElem) in jsonMap) {
-                val state = stateElem.jsonPrimitive.content.toIntOrNull() ?: continue
-                val component = ComponentName(pkg, componentNameStr)
-                pm.setComponentEnabledSetting(
-                    component,
-                    state,
-                    PackageManager.DONT_KILL_APP
-                )
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            val userId = appInfo.uid / 100000
+
+            val jsonMap = Json.parseToJsonElement(snapshotJson).jsonObject
+            for ((componentNameStr, _) in jsonMap) {
+                val componentName = ComponentName(pkg, componentNameStr)
+                val res = shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
+                if (res.exitCode != 0) {
+                    shellService.exec(arrayOf("pm", "enable", "--user", userId.toString(), componentName.flattenToString()))
+                }
             }
+            true
         } catch (e: Throwable) {
-            Log.e(TAG, "Failed restoring snapshot for $pkg", e)
+            Log.e(TAG, "Failed restoring snapshot via shell", e)
+            false
         }
     }
 
     companion object {
-        const val TAG = "CrashWatchdogWorker"
+        private const val TAG = "CrashWatchdogWorker"
         const val KEY_POLICY_OP_ID = "key_policy_op_id"
-        const val KEY_PKG = "key_pkg"
         const val KEY_APPLIED_AT = "key_applied_at"
-        const val KEY_SNAPSHOT = "key_snapshot"
     }
 }

@@ -9,5 +9,6 @@ import androidx.room.Entity
 data class ScanFailed(
     val pkg: String,
     val versionCode: Long,
-    val crashCount: Int
+    val crashCount: Int,
+    val lastCrashAt: Long = 0
 )

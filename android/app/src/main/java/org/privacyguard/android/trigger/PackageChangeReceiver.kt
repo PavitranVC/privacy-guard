@@ -8,7 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.privacyguard.android.data.AppDatabase
-import org.privacyguard.android.data.entity.ReconcileRequest
 
 class PackageChangeReceiver : BroadcastReceiver() {
 
@@ -16,17 +15,17 @@ class PackageChangeReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         val pkg = intent.data?.schemeSpecificPart ?: return
 
-        Log.i(TAG, "Package event received: action=$action, pkg=$pkg")
+        // Anti-fingerprinting: Log action only without logging package name
+        Log.i(TAG, "Package event received: action=$action")
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = AppDatabase.getInstance(context)
-                db.reconcileRequestDao().insertIgnore(
-                    ReconcileRequest(pkg = pkg, requestedAt = System.currentTimeMillis())
-                )
+                db.reconcileRequestDao().upsertRequest(pkg, System.currentTimeMillis())
+                ReconciliationCoordinator.scheduleDrainWork(context)
             } catch (t: Throwable) {
-                Log.e(TAG, "Failed inserting reconcile request for $pkg", t)
+                Log.e(TAG, "Failed recording reconcile request", t)
             } finally {
                 pendingResult.finish()
             }

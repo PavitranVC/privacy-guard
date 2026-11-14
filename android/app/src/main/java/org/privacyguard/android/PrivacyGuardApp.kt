@@ -1,14 +1,11 @@
 package org.privacyguard.android
 
-import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
-import android.os.PowerManager
-import android.os.Process
 import android.util.Log
+import androidx.work.Configuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,74 +16,51 @@ import org.privacyguard.android.trigger.PackageChangeReceiver
 import org.privacyguard.android.trigger.PowerSaveReceiver
 import org.privacyguard.android.trigger.ReconciliationCoordinator
 
-class PrivacyGuardApp : Application() {
+class PrivacyGuardApp : Application(), Configuration.Provider {
 
     private val packageChangeReceiver = PackageChangeReceiver()
     private val powerSaveReceiver = PowerSaveReceiver()
 
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
+
     override fun onCreate() {
         super.onCreate()
 
-        // Strict process isolation guard: skip initialization for :scan or other secondary processes
-        val currentProcess = getProcessNameCompat()
+        // Strict process isolation guard: skip initialization for :scan or any secondary processes
+        val currentProcess = Application.getProcessName()
         if (currentProcess != packageName) {
-            Log.i(TAG, "Process $currentProcess is secondary; bypassing main-process initialization")
             return
         }
 
         // Initialize HiddenApiBypass exemptions in the main process
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                HiddenApiBypass.addHiddenApiExemptions("")
-                Log.i(TAG, "HiddenApiBypass exemptions applied successfully")
-            } catch (t: Throwable) {
-                Log.e(TAG, "Failed applying HiddenApiBypass exemptions", t)
-            }
+        try {
+            HiddenApiBypass.addHiddenApiExemptions("")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed applying HiddenApiBypass exemptions", t)
         }
 
         // Initialize Room Database
         AppDatabase.getInstance(this)
 
-        // Initialize Shizuku Manager (listeners & binder registration)
+        // Initialize Shizuku Manager
         ShizukuManager.getInstance(this).init()
 
-        // Register dynamic PackageChangeReceiver with RECEIVER_EXPORTED (system package events from UID 1000)
+        // Register dynamic receivers with Context.RECEIVER_NOT_EXPORTED
         val packageFilter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
             addDataScheme("package")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(packageChangeReceiver, packageFilter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(packageChangeReceiver, packageFilter)
-        }
+        registerReceiver(packageChangeReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED)
 
-        // Register dynamic PowerSaveReceiver with RECEIVER_NOT_EXPORTED
         val powerFilter = IntentFilter(PowerSaveReceiver.ACTION_POWER_SAVE_WHITELIST_CHANGED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(powerSaveReceiver, powerFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(powerSaveReceiver, powerFilter)
-        }
+        registerReceiver(powerSaveReceiver, powerFilter, Context.RECEIVER_NOT_EXPORTED)
 
-        // Seed initial changed packages delta check
+        // Initial reconciliation check
         CoroutineScope(Dispatchers.IO).launch {
             ReconciliationCoordinator.triggerChangedPackagesCheck(this@PrivacyGuardApp)
-        }
-    }
-
-    private fun getProcessNameCompat(): String {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            return Application.getProcessName()
-        }
-        return try {
-            val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            val myPid = Process.myPid()
-            am?.runningAppProcesses?.firstOrNull { it.pid == myPid }?.processName ?: packageName
-        } catch (e: Throwable) {
-            packageName
         }
     }
 

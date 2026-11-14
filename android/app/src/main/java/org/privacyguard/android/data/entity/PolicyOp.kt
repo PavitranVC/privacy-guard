@@ -8,7 +8,8 @@ import androidx.room.PrimaryKey
     tableName = "policy_op",
     indices = [
         Index(value = ["pkg", "versionCode"]),
-        Index(value = ["status"])
+        Index(value = ["status"]),
+        Index(value = ["pkg", "op", "target"], unique = true)
     ]
 )
 data class PolicyOp(
@@ -33,6 +34,7 @@ data class PolicyOp(
         const val STATUS_APPLYING = "APPLYING"
         const val STATUS_APPLIED = "APPLIED"
         const val STATUS_DRIFT = "DRIFT"
+        const val STATUS_SUPERSEDED = "SUPERSEDED"
         const val STATUS_FAILED_TRANSIENT = "FAILED_TRANSIENT"
         const val STATUS_FAILED_PERMANENT = "FAILED_PERMANENT"
         const val STATUS_ROLLED_BACK_UNSAFE = "ROLLED_BACK_UNSAFE"

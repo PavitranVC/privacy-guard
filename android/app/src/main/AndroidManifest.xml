@@ -15,7 +15,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
 
-        <!-- Sole exported component per GEMINI.md attack surface invariants -->
+        <!-- Sole exported application activity per GEMINI.md attack surface invariants -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true">
@@ -24,6 +24,41 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ShizukuProvider guarded strictly by INTERACT_ACROSS_USERS_FULL for binder delivery -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:exported="true"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- Milestone 1B isolated :scan process service -->
+        <service
+            android:name=".scan.ScanService"
+            android:process=":scan"
+            android:exported="false" />
+
+        <!-- Disable default WorkManagerInitializer; PrivacyGuardApp implements Configuration.Provider -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
+
+        <!-- Strip third-party exported receivers to prevent external intent dispatch -->
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove" />
+
+        <receiver
+            android:name="androidx.work.impl.diagnostics.DiagnosticsReceiver"
+            tools:node="remove" />
 
     </application>
 

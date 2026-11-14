@@ -17,6 +17,7 @@ captures/
 *.aab
 *.onnx
 *.bin
+!android/app/src/main/assets/*.bin
 *.bloom
 
 # OS & Python virtual environments

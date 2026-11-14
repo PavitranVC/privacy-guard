@@ -8,7 +8,7 @@
 - Prefer Ed25519-signed offline snapshots (`Signature.getInstance("Ed25519")`, API 33+) for known-bad hashes, LightGBM weights, and Exodus tracker prefixes; never bulk-query 150+ installed hashes on first launch.
 - Enforce a hard sensitive-category denylist (health, dating, religion, LGBTQ, finance, VPN/Tor, stalkerware detectors) plus user-marked exclusions that NEVER touch the network. Skip online lookups for system apps and trusted-publisher signing certs (Google, Mozilla, F-Droid).
 - Online lookups run one at a time on UNMETERED networks with randomized multi-day jitter, decoy popular-hash requests, fixed generic `User-Agent`, zero cookies, and minimized payloads (`{pkg, versionCode, sha256, stripped_public_text}` only).
-- Export NOTHING in `AndroidManifest.xml` except the launcher `MainActivity`. Use explicit intents only; expose zero external triggers for Shizuku actions.
+- Export NOTHING in `AndroidManifest.xml` except the launcher `MainActivity` and the `android.permission.INTERACT_ACROSS_USERS_FULL`-guarded `rikka.shizuku.ShizukuProvider` for Shizuku binder delivery. Use explicit intents only; expose zero external triggers for Shizuku actions.
 
 ## 2. Vibe-Coding & Android 15–16 Guardrails
 - Always generate `implementation_plan.md` for approval before modifying `libs.versions.toml`, `build.gradle.kts`, `CMakeLists.txt`, or AIDL files.

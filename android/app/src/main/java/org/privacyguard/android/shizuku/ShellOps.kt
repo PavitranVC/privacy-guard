@@ -2,11 +2,12 @@ package org.privacyguard.android.shizuku
 
 import android.content.ComponentName
 import android.content.Context
-import android.content.pm.ComponentInfo
-import android.content.pm.PackageInfo
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Process
+import android.os.DeadObjectException
+import android.os.RemoteException
 import android.util.Log
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -18,11 +19,12 @@ object ShellOps {
 
     private const val TAG = "ShellOps"
 
-    // GEMINI.md protected component and package identifiers
+    // Safe-list constants strictly protecting core platform and Firebase infrastructure
     private val PROTECTED_PACKAGES = setOf(
         "com.google.android.gms",
         "com.android.vending",
-        "com.android.gsf"
+        "com.google.android.gsf",
+        "moe.shizuku.privileged.api"
     )
 
     private val PROTECTED_COMPONENTS = setOf(
@@ -37,16 +39,35 @@ object ShellOps {
     enum class IsolationResult(val statusString: String) {
         CHAIN3_SUCCESS("APPLIED_CHAIN3"),
         CHAIN9_SUCCESS("APPLIED_CHAIN9"),
-        APPOPS_RESTRICTED("APPLIED_APPOPS_RESTRICTED"),
+        APPOPS_PARTIAL("APPLIED_APPOPS_PARTIAL"),
         UNISOLATABLE_ON_WIFI("UNISOLATABLE_ON_WIFI")
     }
 
     /**
      * Checks if a package or component is safe-listed and protected from mutation.
      */
-    fun isSafeListed(pkg: String, componentClassName: String? = null): Boolean {
+    fun isSafeListed(
+        context: Context,
+        pkg: String,
+        componentClassName: String? = null
+    ): Boolean {
+        if (pkg == context.packageName) return true
         if (PROTECTED_PACKAGES.contains(pkg)) return true
+
+        val pm = context.packageManager
+        try {
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            if ((appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
+                // Strictly protect system apps from component modification
+                return true
+            }
+        } catch (e: Exception) {
+            return true
+        }
+
         if (componentClassName != null) {
+            if (componentClassName.startsWith("androidx.work.impl.")) return true
+
             for (protected in PROTECTED_COMPONENTS) {
                 if (componentClassName.contains(protected, ignoreCase = true)) {
                     return true
@@ -63,6 +84,36 @@ object ShellOps {
     }
 
     /**
+     * Dynamically discovers all Firebase and Google Cloud Messaging intent handlers
+     * on the target package to add them to the protected safe-list.
+     */
+    fun queryProtectedMessagingComponents(context: Context, pkg: String): Set<String> {
+        val pm = context.packageManager
+        val protectedSet = mutableSetOf<String>()
+
+        val actions = listOf(
+            "com.google.firebase.MESSAGING_EVENT",
+            "com.google.android.c2dm.intent.RECEIVE",
+            "com.google.firebase.INSTANCE_ID_EVENT"
+        )
+
+        for (action in actions) {
+            val intent = Intent(action).setPackage(pkg)
+            val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DISABLED_COMPONENTS.toLong())
+            val services = pm.queryIntentServices(intent, flags)
+            for (resolveInfo in services) {
+                resolveInfo.serviceInfo?.name?.let { protectedSet.add(it) }
+            }
+            val receivers = pm.queryBroadcastReceivers(intent, flags)
+            for (resolveInfo in receivers) {
+                resolveInfo.activityInfo?.name?.let { protectedSet.add(it) }
+            }
+        }
+
+        return protectedSet
+    }
+
+    /**
      * Probes shell capabilities (connectivity, appops, pm) and caches in capability entity list.
      */
     fun probeCapabilities(shellService: IShellService): List<Capability> {
@@ -70,10 +121,10 @@ object ShellOps {
         val fingerprint = Build.FINGERPRINT ?: "unknown"
         val now = System.currentTimeMillis()
 
-        // 1. Connectivity probe
+        // 1. Connectivity probe: requires BOTH chain3 enable and package networking verbs
         val connResult = shellService.exec(arrayOf("cmd", "connectivity", "help"))
         val connOut = connResult.stdout + " " + connResult.stderr
-        val chain3Supported = connOut.contains("set-chain3-enabled", ignoreCase = true) ||
+        val chain3Supported = connOut.contains("set-chain3-enabled", ignoreCase = true) &&
                 connOut.contains("set-package-networking-enabled", ignoreCase = true)
         list.add(Capability("connectivity_chain3", chain3Supported, fingerprint, now))
 
@@ -95,86 +146,113 @@ object ShellOps {
     /**
      * Executes the 4-step Wi-Fi isolation ladder:
      * 1. cmd connectivity set-chain3-enabled true + set-package-networking-enabled false <pkg>
-     * 2. IConnectivityManager binder firewall chain 9 fallback
-     * 3. cmd appops set <pkg> RUN_ANY_IN_BACKGROUND ignore + am set-standby-bucket <pkg> restricted
+     * 2. Firewall chain 9 (oem_deny_3) binder fallback
+     * 3. cmd appops set --uid <uid> RUN_ANY_IN_BACKGROUND ignore + am set-standby-bucket --user <userId> <pkg> restricted
      * 4. honest fallback status "UNISOLATABLE_ON_WIFI"
      */
     fun isolatePackageNetworking(
         context: Context,
         shellService: IShellService,
-        pkg: String,
-        userId: Int = 0
+        pkg: String
     ): IsolationResult {
         val pm = context.packageManager
         val pkgInfo = try {
             pm.getPackageInfo(pkg, 0)
         } catch (e: Exception) {
-            Log.e(TAG, "Package not found for isolation: $pkg", e)
+            Log.e(TAG, "Package not found for isolation")
             return IsolationResult.UNISOLATABLE_ON_WIFI
         }
 
-        val appId = pkgInfo.applicationInfo?.uid?.let { it % 100000 } ?: 0
-        val targetUid = userId * 100000 + appId
+        val appUid = pkgInfo.applicationInfo?.uid ?: 0
+        val userId = appUid / 100000
 
-        // Warn if shared UID
-        pkgInfo.sharedUserId?.let { sharedUid ->
-            Log.w(TAG, "WARNING: Shared UID detected for $pkg ($sharedUid, uid=$targetUid). Wi-Fi isolation affects all co-located packages!")
+        // Invariant: If target app shares UID with other apps, UID firewall isolation cannot safely isolate it alone
+        if (pkgInfo.sharedUserId != null) {
+            Log.w(TAG, "Shared UID detected; refusing UID firewall isolation to prevent collateral blocking")
+            return IsolationResult.UNISOLATABLE_ON_WIFI
         }
 
-        // Ladder Step 1: Chain 3 package networking
+        // Ladder Step 1: Chain 3 package networking (oem_deny_3 verbs)
         try {
             shellService.exec(arrayOf("cmd", "connectivity", "set-chain3-enabled", "true"))
             val r1 = shellService.exec(arrayOf("cmd", "connectivity", "set-package-networking-enabled", "false", pkg))
             if (r1.exitCode == 0) {
                 return IsolationResult.CHAIN3_SUCCESS
             }
+        } catch (e: DeadObjectException) {
+            throw e
+        } catch (e: RemoteException) {
+            throw e
         } catch (e: Throwable) {
-            Log.w(TAG, "Ladder step 1 (chain3) failed for $pkg", e)
+            Log.w(TAG, "Ladder step 1 (chain3) failed", e)
         }
 
-        // Ladder Step 2: Firewall chain 9 fallback
+        // Ladder Step 2: OEM chain 9 binder/cmd firewall rule
         try {
-            val r2 = shellService.exec(arrayOf("cmd", "connectivity", "firewall", "chain9", "deny", targetUid.toString()))
+            val r2 = shellService.exec(arrayOf("cmd", "connectivity", "oem_deny_3", "add", appUid.toString()))
             if (r2.exitCode == 0) {
                 return IsolationResult.CHAIN9_SUCCESS
             }
+        } catch (e: DeadObjectException) {
+            throw e
+        } catch (e: RemoteException) {
+            throw e
         } catch (e: Throwable) {
-            Log.w(TAG, "Ladder step 2 (chain9) failed for $pkg", e)
+            Log.w(TAG, "Ladder step 2 (chain9) failed", e)
         }
 
         // Ladder Step 3: AppOps ignore + Standby bucket restricted
         try {
-            val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "ignore"))
-            val rBucket = shellService.exec(arrayOf("am", "set-standby-bucket", pkg, "restricted"))
-            
-            // Read-back verification
-            val verify = shellService.exec(arrayOf("cmd", "appops", "get", pkg, "RUN_ANY_IN_BACKGROUND"))
-            if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) &&
-                (verify.stdout.contains("ignore", ignoreCase = true) || verify.exitCode == 0)
-            ) {
-                return IsolationResult.APPOPS_RESTRICTED
+            val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"))
+            val rBucket = shellService.exec(arrayOf("am", "set-standby-bucket", "--user", userId.toString(), pkg, "restricted"))
+
+            // Verify AppOps read-back: must match regex RUN_ANY_IN_BACKGROUND:\s*ignore
+            val verify = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
+            val verifyOut = verify.stdout
+            val pattern = Regex("RUN_ANY_IN_BACKGROUND:\\s*ignore", RegexOption.IGNORE_CASE)
+            if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
+                return IsolationResult.APPOPS_PARTIAL
             }
+        } catch (e: DeadObjectException) {
+            throw e
+        } catch (e: RemoteException) {
+            throw e
         } catch (e: Throwable) {
-            Log.w(TAG, "Ladder step 3 (appops/standby) failed for $pkg", e)
+            Log.w(TAG, "Ladder step 3 (appops/standby) failed", e)
         }
 
         // Ladder Step 4: Honest fallback status
-        Log.w(TAG, "All Wi-Fi isolation ladder steps exhausted for $pkg. Reporting UNISOLATABLE_ON_WIFI")
         return IsolationResult.UNISOLATABLE_ON_WIFI
     }
 
     /**
-     * Mutates only Service and Receiver components declared in the target app's manifest
-     * via COMPONENT_ENABLED_STATE_DISABLED_USER (DONT_KILL_APP).
-     * Returns the serialized original snapshot for auto-rollback.
+     * Reads pre-mutation component enabled states into a serialized JSON snapshot.
+     */
+    fun createPreMutationSnapshot(
+        context: Context,
+        pkg: String,
+        targetComponents: List<String>
+    ): String {
+        val pm = context.packageManager
+        val snapshotMap = mutableMapOf<String, Int>()
+        for (comp in targetComponents) {
+            val componentName = ComponentName(pkg, comp)
+            snapshotMap[comp] = pm.getComponentEnabledSetting(componentName)
+        }
+        return Json.encodeToString(snapshotMap)
+    }
+
+    /**
+     * Mutates manifest Service/Receiver components via shell pm disable-user --user $userId.
+     * Throws on read-back verification mismatch to trigger immediate rollback.
      */
     fun disableManifestComponents(
         context: Context,
         shellService: IShellService,
         pkg: String,
         targetComponents: List<String>
-    ): String {
-        if (isSafeListed(pkg)) {
+    ) {
+        if (isSafeListed(context, pkg)) {
             throw IllegalArgumentException("Cannot disable components for protected package: $pkg")
         }
 
@@ -188,50 +266,57 @@ object ShellOps {
         val declaredReceivers = pkgInfo.receivers?.map { it.name }?.toSet() ?: emptySet()
         val declaredValid = declaredServices + declaredReceivers
 
-        val snapshotMap = mutableMapOf<String, Int>()
+        val dynamicProtected = queryProtectedMessagingComponents(context, pkg)
+        val userId = (pkgInfo.applicationInfo?.uid ?: 0) / 100000
+
+        val mutatedSoFar = mutableListOf<String>()
 
         for (comp in targetComponents) {
             if (!declaredValid.contains(comp)) {
-                Log.w(TAG, "Component $comp is not a manifest-declared Service or Receiver of $pkg. Skipping.")
                 continue
             }
-            if (isSafeListed(pkg, comp)) {
-                Log.w(TAG, "Component $comp in $pkg is safe-listed. Skipping.")
+            if (isSafeListed(context, pkg, comp) || dynamicProtected.contains(comp)) {
                 continue
             }
 
             val componentName = ComponentName(pkg, comp)
-            val currentState = pm.getComponentEnabledSetting(componentName)
-            snapshotMap[comp] = currentState
-
-            // Disable via pm shell command or PackageManager
-            val r = shellService.exec(arrayOf("pm", "disable-user", "--user", "0", componentName.flattenToString()))
-            if (r.exitCode != 0) {
-                // Fallback to PackageManager API
-                pm.setComponentEnabledSetting(
-                    componentName,
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
-                    PackageManager.DONT_KILL_APP
-                )
+            val res = shellService.exec(arrayOf("pm", "disable-user", "--user", userId.toString(), componentName.flattenToString()))
+            if (res.exitCode != 0) {
+                // Rollback any mutated components
+                rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                throw IllegalStateException("pm disable-user failed for $comp: ${res.stderr}")
             }
+            mutatedSoFar.add(comp)
 
             // Read-back verification
-            val verifiedState = pm.getComponentEnabledSetting(componentName)
-            if (verifiedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
-                verifiedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            val observedState = pm.getComponentEnabledSetting(componentName)
+            if (observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
+                observedState != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             ) {
-                Log.w(TAG, "Read-back verification failed for $comp: observed state=$verifiedState")
+                rollbackComponents(shellService, pkg, userId, mutatedSoFar)
+                throw IllegalStateException("Read-back verification mismatch on $comp: observed=$observedState")
             }
         }
+    }
 
-        return Json.encodeToString(snapshotMap)
+    private fun rollbackComponents(
+        shellService: IShellService,
+        pkg: String,
+        userId: Int,
+        components: List<String>
+    ) {
+        for (comp in components) {
+            try {
+                val componentName = ComponentName(pkg, comp)
+                shellService.exec(arrayOf("pm", "default-state", "--user", userId.toString(), componentName.flattenToString()))
+            } catch (ignored: Throwable) {}
+        }
     }
 
     /**
-     * Terminate the target app process safely using `am kill --user 0 <pkg>`.
-     * GEMINI.md explicitly forbids using `am force-stop`.
+     * Terminate target process safely via am kill --user $userId.
      */
-    fun killProcessSafely(shellService: IShellService, pkg: String): ShellResult {
-        return shellService.exec(arrayOf("am", "kill", "--user", "0", pkg))
+    fun killProcessSafely(shellService: IShellService, pkg: String, userId: Int): ShellResult {
+        return shellService.exec(arrayOf("am", "kill", "--user", userId.toString(), pkg))
     }
 }
