@@ -75,49 +75,30 @@ object ShieldProbe {
 
         val tunnelStatus: TunnelStatus
         if (isVpnActive) {
-            if (vpnV4 == null && vpnV6 == null) {
-                // VPN transport is up but active HTTP socket times out
-                tunnelStatus = TunnelStatus.STALLED
-            } else {
-                // Discover physical underlying network via cm.allNetworks (non-SystemApi)
-                val physicalNetwork = cm.allNetworks.firstOrNull { net ->
-                    val netCaps = cm.getNetworkCapabilities(net)
-                    netCaps != null &&
-                            !netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                            netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                            netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED) &&
-                            (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                             netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                             netCaps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
-                }
-
-                if (physicalNetwork != null) {
-                    val physTraceV4 = probeTrace(physicalNetwork, IPV4_TRACE_URL)
-                    val physTraceV6 = probeTrace(physicalNetwork, IPV6_TRACE_URL)
-                    val physV4 = physTraceV4?.ip
-                    val physV6 = physTraceV6?.ip
-
-                    val hasV4Comparison = vpnV4 != null && physV4 != null
-                    val hasV6Comparison = vpnV6 != null && physV6 != null
-
-                    if (hasV4Comparison || hasV6Comparison) {
-                        val v4Leak = hasV4Comparison && vpnV4 == physV4
-                        val v6Leak = hasV6Comparison && vpnV6 == physV6
-                        val isLeaking = v4Leak || v6Leak
-
-                        tunnelStatus = if (isLeaking) {
-                            TunnelStatus.LEAKING
-                        } else {
-                            TunnelStatus.HEALTHY
-                        }
-                    } else {
-                        // Neither family has both non-null VPN and physical IPs to compare
-                        tunnelStatus = TunnelStatus.INCONCLUSIVE
-                    }
-                } else {
-                    tunnelStatus = TunnelStatus.INCONCLUSIVE
-                }
+            // Discover physical underlying network via cm.allNetworks (non-SystemApi)
+            val physicalNetwork = cm.allNetworks.firstOrNull { net ->
+                val netCaps = cm.getNetworkCapabilities(net)
+                netCaps != null &&
+                        !netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                        netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED) &&
+                        (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                         netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                         netCaps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
             }
+
+            val physTraceV4 = physicalNetwork?.let { probeTrace(it, IPV4_TRACE_URL) }
+            val physTraceV6 = physicalNetwork?.let { probeTrace(it, IPV6_TRACE_URL) }
+            val physV4 = physTraceV4?.ip
+            val physV6 = physTraceV6?.ip
+
+            tunnelStatus = classifyTunnel(
+                vpnV4 = vpnV4,
+                vpnV6 = vpnV6,
+                physV4 = physV4,
+                physV6 = physV6,
+                hasPhysical = physicalNetwork != null
+            )
         } else {
             tunnelStatus = TunnelStatus.NO_VPN
         }
@@ -132,6 +113,36 @@ object ShieldProbe {
             warpStatus = warpStatus,
             tunnelStatus = tunnelStatus
         )
+    }
+
+    /**
+     * Pure classification function for VPN tunnel state given dual-stack IPs.
+     */
+    fun classifyTunnel(
+        vpnV4: String?,
+        vpnV6: String?,
+        physV4: String?,
+        physV6: String?,
+        hasPhysical: Boolean
+    ): TunnelStatus {
+        if (vpnV4 == null && vpnV6 == null) {
+            return TunnelStatus.STALLED
+        }
+        if (!hasPhysical) {
+            return TunnelStatus.INCONCLUSIVE
+        }
+        val isLeaking = (vpnV4 != null && physV4 != null && vpnV4 == physV4) ||
+                (vpnV6 != null && physV6 != null && vpnV6 == physV6)
+        if (isLeaking) {
+            return TunnelStatus.LEAKING
+        }
+        val isHealthy = (vpnV4 == null || (physV4 != null && vpnV4 != physV4)) &&
+                (vpnV6 == null || (physV6 != null && vpnV6 != physV6)) &&
+                (vpnV4 != null || vpnV6 != null)
+        if (isHealthy) {
+            return TunnelStatus.HEALTHY
+        }
+        return TunnelStatus.INCONCLUSIVE
     }
 
     private fun probeCanarySinkhole(): Boolean {
