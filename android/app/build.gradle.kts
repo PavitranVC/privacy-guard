@@ -185,4 +185,8 @@ dependencies {
 
     // Unit Testing
     testImplementation(libs.junit)
+
+    // On-Device Instrumentation Testing
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }
