@@ -6,7 +6,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 import org.privacyguard.android.data.entity.PolicyOp
+import org.privacyguard.android.service.ShellResult
 
 class IsolationPriorsTest {
 
@@ -301,5 +303,130 @@ class IsolationPriorsTest {
         // 3. And the resulting commands MUST pass validateCommand
         assertNull(ShizukuShellService.validateCommand(builtCmds[0]))
         assertNull(ShizukuShellService.validateCommand(builtCmds[1]))
+    }
+
+    @Test
+    fun `test runIsolationStep3 calls persist before first mutating command`() = runBlocking {
+        val priors = ShellOps.PriorIsolationState("40", "allow")
+        val formattedStatus = ShellOps.formatIsolationResult(ShellOps.IsolationResult.APPOPS_PARTIAL, priors)
+        val events = mutableListOf<String>()
+
+        val onPersist: suspend (String) -> Boolean = { status ->
+            events.add("persist:$status")
+            true
+        }
+
+        val exec: suspend (Array<String>) -> ShellResult = { cmd ->
+            events.add("exec:${cmd.joinToString(" ")}")
+            ShellResult(0, "Uid mode: RUN_ANY_IN_BACKGROUND: ignore\n", "")
+        }
+
+        val outcome = ShellOps.runIsolationStep3(
+            priors = priors,
+            formattedStatus = formattedStatus,
+            appUid = 10355,
+            userId = 0,
+            pkg = "com.ansangha.drdriving",
+            onPersistObserved = onPersist,
+            exec = exec
+        )
+
+        assertNotNull(outcome)
+        assertEquals(ShellOps.IsolationResult.APPOPS_PARTIAL, outcome!!.result)
+        val persistIdx = events.indexOf("persist:$formattedStatus")
+        val firstMutatingIdx = events.indexOfFirst { it.startsWith("exec:cmd appops set") }
+        assertTrue("persist must be called", persistIdx != -1)
+        assertTrue("first mutating command must be called", firstMutatingIdx != -1)
+        assertTrue("persist must precede first mutating exec: persistIdx=$persistIdx, firstMutatingIdx=$firstMutatingIdx", persistIdx < firstMutatingIdx)
+    }
+
+    @Test
+    fun `test runIsolationStep3 throws ConcurrentMutationException when persist fails and executes zero mutating commands`() = runBlocking {
+        val priors = ShellOps.PriorIsolationState("40", "allow")
+        val formattedStatus = ShellOps.formatIsolationResult(ShellOps.IsolationResult.APPOPS_PARTIAL, priors)
+        val executedCmds = mutableListOf<String>()
+
+        val onPersist: suspend (String) -> Boolean = { _ -> false }
+        val exec: suspend (Array<String>) -> ShellResult = { cmd ->
+            executedCmds.add(cmd.joinToString(" "))
+            ShellResult(0, "", "")
+        }
+
+        var thrown = false
+        try {
+            ShellOps.runIsolationStep3(
+                priors = priors,
+                formattedStatus = formattedStatus,
+                appUid = 10355,
+                userId = 0,
+                pkg = "com.ansangha.drdriving",
+                onPersistObserved = onPersist,
+                exec = exec
+            )
+        } catch (_: ConcurrentMutationException) {
+            thrown = true
+        }
+
+        assertTrue("ConcurrentMutationException must be thrown", thrown)
+        assertTrue("Zero mutating commands should be executed: $executedCmds", executedCmds.isEmpty())
+    }
+
+    @Test
+    fun `test runIsolationStep3 runs commands when onPersistObserved is null`() = runBlocking {
+        val priors = ShellOps.PriorIsolationState("30", "ignore")
+        val formattedStatus = ShellOps.formatIsolationResult(ShellOps.IsolationResult.APPOPS_PARTIAL, priors)
+        val executedCmds = mutableListOf<String>()
+
+        val exec: suspend (Array<String>) -> ShellResult = { cmd ->
+            executedCmds.add(cmd.joinToString(" "))
+            ShellResult(0, "Uid mode: RUN_ANY_IN_BACKGROUND: ignore\n", "")
+        }
+
+        val outcome = ShellOps.runIsolationStep3(
+            priors = priors,
+            formattedStatus = formattedStatus,
+            appUid = 10355,
+            userId = 0,
+            pkg = "com.ansangha.drdriving",
+            onPersistObserved = null,
+            exec = exec
+        )
+
+        assertNotNull(outcome)
+        assertEquals(ShellOps.IsolationResult.APPOPS_PARTIAL, outcome!!.result)
+        assertEquals(3, executedCmds.size) // apply cmd 1, apply cmd 2, verify cmd
+    }
+
+    @Test
+    fun `test runIsolationStep3 legacy null priors persists suffix-less status and runs`() = runBlocking {
+        val legacyFormattedStatus = ShellOps.formatIsolationResult(ShellOps.IsolationResult.APPOPS_PARTIAL, null)
+        assertEquals("APPOPS_STANDBY_RESTRICTED", legacyFormattedStatus)
+
+        var persistedStatus: String? = null
+        val executedCmds = mutableListOf<String>()
+
+        val onPersist: suspend (String) -> Boolean = { status ->
+            persistedStatus = status
+            true
+        }
+        val exec: suspend (Array<String>) -> ShellResult = { cmd ->
+            executedCmds.add(cmd.joinToString(" "))
+            ShellResult(0, "Uid mode: RUN_ANY_IN_BACKGROUND: ignore\n", "")
+        }
+
+        val outcome = ShellOps.runIsolationStep3(
+            priors = null,
+            formattedStatus = legacyFormattedStatus,
+            appUid = 10355,
+            userId = 0,
+            pkg = "com.ansangha.drdriving",
+            onPersistObserved = onPersist,
+            exec = exec
+        )
+
+        assertNotNull(outcome)
+        assertEquals("APPOPS_STANDBY_RESTRICTED", persistedStatus)
+        assertEquals("APPOPS_STANDBY_RESTRICTED", outcome!!.observedString)
+        assertEquals(3, executedCmds.size)
     }
 }

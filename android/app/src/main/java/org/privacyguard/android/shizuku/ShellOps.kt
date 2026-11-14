@@ -397,6 +397,37 @@ object ShellOps {
         return list
     }
 
+    suspend fun runIsolationStep3(
+        priors: PriorIsolationState?,
+        formattedStatus: String,
+        appUid: Int,
+        userId: Int,
+        pkg: String,
+        onPersistObserved: (suspend (String) -> Boolean)? = null,
+        exec: suspend (Array<String>) -> ShellResult
+    ): NetworkIsolationOutcome? {
+        if (onPersistObserved != null) {
+            val persisted = onPersistObserved(formattedStatus)
+            if (!persisted) {
+                throw ConcurrentMutationException("Failed to persist priors before mutation for $pkg (lost gen/lease race)")
+            }
+        }
+
+        val applyCmds = buildIsolationStep3ApplyCommands(appUid, userId, pkg)
+        val rAppOps = exec(applyCmds[0])
+        checkSecurityDenial(rAppOps.stderr)
+        val rBucket = exec(applyCmds[1])
+        checkSecurityDenial(rBucket.stderr)
+
+        val verify = exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
+        val verifyOut = verify.stdout
+        val pattern = Regex("RUN_ANY_IN_BACKGROUND:\\s*ignore", RegexOption.IGNORE_CASE)
+        if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
+            return NetworkIsolationOutcome(IsolationResult.APPOPS_PARTIAL, formattedStatus)
+        }
+        return null
+    }
+
     suspend fun isolatePackageNetworking(
         context: Context,
         shellService: IShellService,
@@ -484,24 +515,17 @@ object ShellOps {
             }
 
             val formattedStatus = formatIsolationResult(IsolationResult.APPOPS_PARTIAL, priors)
-            if (onPersistObserved != null) {
-                val persisted = onPersistObserved(formattedStatus)
-                if (!persisted) {
-                    throw ConcurrentMutationException("Failed to persist priors before mutation for $pkg (lost gen/lease race)")
-                }
-            }
-
-            val applyCmds = buildIsolationStep3ApplyCommands(appUid, userId, pkg)
-            val rAppOps = shellService.exec(applyCmds[0])
-            checkSecurityDenial(rAppOps.stderr)
-            val rBucket = shellService.exec(applyCmds[1])
-            checkSecurityDenial(rBucket.stderr)
-
-            val verify = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
-            val verifyOut = verify.stdout
-            val pattern = Regex("RUN_ANY_IN_BACKGROUND:\\s*ignore", RegexOption.IGNORE_CASE)
-            if ((rAppOps.exitCode == 0 || rBucket.exitCode == 0) && pattern.containsMatchIn(verifyOut)) {
-                return NetworkIsolationOutcome(IsolationResult.APPOPS_PARTIAL, formattedStatus)
+            val outcome = runIsolationStep3(
+                priors = priors,
+                formattedStatus = formattedStatus,
+                appUid = appUid,
+                userId = userId,
+                pkg = pkg,
+                onPersistObserved = onPersistObserved,
+                exec = { cmd -> shellService.exec(cmd) }
+            )
+            if (outcome != null) {
+                return outcome
             }
         } catch (e: ConcurrentMutationException) {
             throw e
