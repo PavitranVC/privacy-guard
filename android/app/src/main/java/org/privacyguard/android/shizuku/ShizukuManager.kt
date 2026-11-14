@@ -222,7 +222,7 @@ class ShizukuManager private constructor(private val appContext: Context) {
         try {
             when (op.op) {
                 "isolate_wifi" -> {
-                    val outcome = ShellOps.isolatePackageNetworking(appContext, service, op.pkg, db.capabilityDao(), op.observed)
+                    val outcome = ShellOps.isolatePackageNetworking(appContext, service, op.pkg, db.capabilityDao(), op.observed, op.status)
                     withContext(NonCancellable) {
                         rowsUpdated = when (outcome.result) {
                             ShellOps.IsolationResult.UNISOLATABLE_ON_WIFI ->

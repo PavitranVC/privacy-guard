@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.privacyguard.android.data.entity.PolicyOp
 
 class IsolationPriorsTest {
 
@@ -92,6 +93,38 @@ class IsolationPriorsTest {
         assertFalse(ShellOps.isValidAppOpsMode("active"))
         assertFalse(ShellOps.isValidAppOpsMode(null))
         assertFalse(ShellOps.isValidAppOpsMode(""))
+    }
+
+    @Test
+    fun `test shouldReusePriors and isLegacyPartialWithoutSuffix decision logic`() {
+        val validObserved = "APPOPS_STANDBY_RESTRICTED|bucket=40|appops=ignore"
+        val legacyNoSuffix = "APPOPS_STANDBY_RESTRICTED"
+
+        // 1. Fresh PENDING (e.g. after SUPERSEDED, UNLOCKED, DRIFT, or fresh queue) -> MUST NOT reuse (read fresh)
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, validObserved))
+
+        // 2. Retry after transient failure or during active apply -> MUST reuse
+        assertTrue(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, validObserved))
+        assertTrue(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, validObserved))
+
+        // 3. Other statuses (e.g. APPLIED, SUPERSEDED, DRIFT) -> MUST NOT reuse
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_SUPERSEDED, validObserved))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLIED, validObserved))
+
+        // 4. Legacy no-suffix rows -> MUST NOT reuse, but detected as legacy
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, legacyNoSuffix))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, legacyNoSuffix))
+        assertTrue(ShellOps.isLegacyPartialWithoutSuffix(legacyNoSuffix))
+        assertFalse(ShellOps.isLegacyPartialWithoutSuffix(validObserved))
+        assertFalse(ShellOps.isLegacyPartialWithoutSuffix(null))
+        assertFalse(ShellOps.isLegacyPartialWithoutSuffix(""))
+
+        // 5. Empty or null observed -> MUST NOT reuse
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, ""))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_APPLYING, null))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, ""))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_FAILED_TRANSIENT, null))
+        assertFalse(ShellOps.shouldReusePriors(PolicyOp.STATUS_PENDING, null))
     }
 
     @Test

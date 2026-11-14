@@ -15,6 +15,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.privacyguard.android.data.dao.CapabilityDao
 import org.privacyguard.android.data.entity.Capability
+import org.privacyguard.android.data.entity.PolicyOp
 import org.privacyguard.android.service.IShellService
 import org.privacyguard.android.service.ShellResult
 
@@ -220,6 +221,21 @@ object ShellOps {
         return PriorIsolationState(bucket, appOps)
     }
 
+    fun shouldReusePriors(status: String?, observed: String?): Boolean {
+        if (status != PolicyOp.STATUS_APPLYING && status != PolicyOp.STATUS_FAILED_TRANSIENT) {
+            return false
+        }
+        if (observed.isNullOrBlank()) return false
+        val priors = parsePriors(observed)
+        return priors != null
+    }
+
+    fun isLegacyPartialWithoutSuffix(observed: String?): Boolean {
+        return observed != null &&
+                observed.startsWith(IsolationResult.APPOPS_PARTIAL.statusString) &&
+                parsePriors(observed) == null
+    }
+
     fun isComponentStateDeniedException(e: SecurityException): Boolean {
         return e.message?.contains("Shell cannot change component state", ignoreCase = true) == true
     }
@@ -336,7 +352,8 @@ object ShellOps {
         shellService: IShellService,
         pkg: String,
         capabilityDao: CapabilityDao? = null,
-        existingObserved: String? = null
+        existingObserved: String? = null,
+        existingStatus: String? = null
     ): NetworkIsolationOutcome {
         val pm = context.packageManager
         val pkgInfo = try {
@@ -401,16 +418,18 @@ object ShellOps {
 
         // Ladder Step 3: AppOps ignore + Standby bucket restricted
         try {
-            // Read prior state ONLY if not already preserved from a previous apply
-            val existingPriors = parsePriors(existingObserved)
-            val priors = if (existingPriors != null) {
-                existingPriors
-            } else {
-                val rReadBucket = shellService.exec(arrayOf("am", "get-standby-bucket", "--user", userId.toString(), pkg))
-                val priorBucket = parseStandbyBucketOutput(rReadBucket.stdout)
-                val rReadAppOps = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
-                val priorAppOps = parseAppOpsRunAnyOutput(rReadAppOps.stdout)
-                PriorIsolationState(priorBucket, priorAppOps)
+            val reuse = shouldReusePriors(existingStatus, existingObserved)
+            val isLegacy = isLegacyPartialWithoutSuffix(existingObserved)
+            val priors = when {
+                reuse -> parsePriors(existingObserved)
+                isLegacy -> null // Legacy row with no suffix: do NOT read already-restricted state as prior! Record null priors.
+                else -> {
+                    val rReadBucket = shellService.exec(arrayOf("am", "get-standby-bucket", "--user", userId.toString(), pkg))
+                    val priorBucket = parseStandbyBucketOutput(rReadBucket.stdout)
+                    val rReadAppOps = shellService.exec(arrayOf("cmd", "appops", "get", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND"))
+                    val priorAppOps = parseAppOpsRunAnyOutput(rReadAppOps.stdout)
+                    PriorIsolationState(priorBucket, priorAppOps)
+                }
             }
 
             val rAppOps = shellService.exec(arrayOf("cmd", "appops", "set", "--uid", appUid.toString(), "RUN_ANY_IN_BACKGROUND", "ignore"))
