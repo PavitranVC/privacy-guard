@@ -27,7 +27,7 @@ All stack versions are verified directly from repository configuration files:
 - **Host OS:** Windows PC [owner-stated]
 - **Repository Path:** `C:\Projects\privacy-guard` [owner-stated]
 - **Gradle Invocation:** Executed via `.\gradlew.bat` from `android\` [owner-stated]
-- **ADB Command:** Invoked via variable `$ADB` pointing to the Android SDK platform-tools binary (`C:\Users\vcpav\AppData\Local\Android\Sdk\platform-tools\adb.exe`) [owner-stated]
+- **ADB Command:** Invoked via variable `$ADB` (or `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`) [owner-stated]
 
 ## External Evidence Directories
 Raw command outputs, device dumps, and execution ledgers are preserved strictly outside the git repository on the host machine:
