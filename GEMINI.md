@@ -22,3 +22,5 @@ After completing ANY task, write/update `walkthrough.md` AND print a concise sum
 2. **Manifest, Privileges & Attack Surface** (permissions, exported flags, Shizuku `UserService`/`cmd` calls).
 3. **Outbound Network & Privacy Audit** (every URL/endpoint touched and exact payload fields, or "None").
 4. **Release Build & On-Device Verification** (exact `./gradlew assembleRelease` / `zipalign -c -P 16 -v 4` / test output).
+
+Read CONTEXT.md first. After every milestone, update docs/DECISIONS.md and docs/STATUS.md.
