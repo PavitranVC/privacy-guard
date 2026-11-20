@@ -282,15 +282,13 @@ On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --u
 ### Cache-clear probe on Moto G54 (Android 15)
 - **P1 (CLI support):** `pm help` lists `clear [--user USER_ID] [--cache-only] PACKAGE` (`--cache-only: a flag which tells if we only need to clear cache data`). Raw capture: `C:\Projects\_smoke_m4b\pm_help.txt`.
 - **P2 (Baseline read):** Parsed verbatim JSON arrays in `dumpsys diskstats` (`Package Names:`, `App Sizes:`, `App Data Sizes:`, `Cache Sizes:`).
-- **P3 & P5 (Clear execution):** `pm clear --cache-only --user 0 <pkg>` hangs indefinitely in `binder_wait_for_work` waiting for `obs.wait()` (PackageManagerService's `deleteApplicationCacheFilesAsUser` observer callback never fires on Android 15). Both commands timed out after 10000ms with exit code 124. Raw captures: `C:\Projects\_smoke_m4b\p3_drdriving_clear.txt`, `C:\Projects\_smoke_m4b\p5_rar_clear.txt`.
-- **P4 (Storage comparison):** App data sizes remained strictly identical before and after clearing attempts (zero app data loss).
-- **P6 (Fallback probe):** `pm trim-caches 200000000000` executed successfully (exit code 0), purging caches via `installd` across the device and freeing 10,636,664 KB (~10.14 GB) of storage (`df /data` available increased from 73,870,368 KB to 84,507,032 KB).
-- **P7 (App state preservation):** Both `com.ansangha.drdriving` and `com.rarlab.rar` were launched via `am start` post-probe; both opened cleanly with zero crashes and preserved all local user settings/state.
+- **P3 & P5 (Clear execution):** `pm clear --cache-only` did not return within 10 s (exit 124) for two packages; the cause is not established. Raw captures: `C:\Projects\_smoke_m4b\p3_drdriving_clear.txt`, `C:\Projects\_smoke_m4b\p5_rar_clear.txt`.
+- **P4 (Storage comparison):** App data sizes remained strictly identical before and after clearing attempts. Note: `dumpsys diskstats` may report cached values; the before/after comparison is inconclusive.
+- **P6 (Fallback probe):** `pm trim-caches 200000000000` executed (exit code 0) (device-wide trim-caches; no raw file saved; not in the ledger), purging caches via `installd` across the device; reported 10,636,664 KB (~10.14 GB) of storage freed (`df /data` available reported increased from 73,870,368 KB to 84,507,032 KB).
+- **P7 (App state preservation):** Both `com.ansangha.drdriving` and `com.rarlab.rar` were launched via `am start` post-probe; apps launched without crashing; login/state not checked.
 
 | Target Package | Index | Code Size (bytes) | App Data Before (bytes) | App Data After (bytes) | Cache Before (bytes) | Cache After (bytes) | Clear Elapsed | Status |
 |---|---|---|---|---|---|---|---|---|
 | `com.ansangha.drdriving` | 85 | 30,680,576 | 7,163,904 | 7,163,904 | 1,196,032 | 1,196,032 | 10,013 ms | TIMEOUT (124) |
 | `com.rarlab.rar` | 246 | 8,205,824 | 1,048,576 | 1,048,576 | 184,320 | 184,320 | 10,018 ms | TIMEOUT (124) |
-
-*Data preservation:* Confirmed 100% intact (0 bytes lost across both apps).
 
