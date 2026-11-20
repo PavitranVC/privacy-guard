@@ -21,11 +21,24 @@ The following areas remain unverified or have returned inconclusive results:
 - `pm trim-caches <huge size>` (`200000000000`) exited with code 0, and available free space on `/data` reported via `df /data` rose by approximately 10 GB (no raw output file saved; ran device-wide and was not logged in the pre-execution ledger) [measured].
 
 ## Machine Learning & AI Subsystems
-- **LightGBM Static Engine:** Bundled Ed25519-signed model (`lgbm_model.bin` + `lgbm_model.bin.sig`) evaluated by a pure C++17 flat-array evaluator with a Java/Python parity test [verified-in-repo, not audited end to end].
+
+### IMPLEMENTED [verified-in-repo]
+- **Static Classifier (LightGBM):**
+  - Signed model binary and signature assets (`lgbm_model.bin`, `lgbm_model.bin.sig`) are loaded and Ed25519-verified in `ScanService.kt` lines 33–46, initializing the C++ flat-array evaluator in `:scan` via `nativeInitEngine` (`ScanService.kt` line 48; `android/app/src/main/cpp/scanner_jni.cpp` lines 328–360).
+  - Invocation pipeline: `ReconciliationCoordinator.kt` line 155 (`scanOrchestrator.scanPackageWithSplits`) calls `ScanOrchestrator.kt` line 107 (`service.scanApkFd(pfd)`), which enters `ScanService.kt` line 86 (`nativeScanApkFd(descriptor.fd)`) and invokes `engine->evaluator.evaluate(features)` in `android/app/src/main/cpp/scanner_jni.cpp` line 400.
+  - `LightGbmParityTest.kt` lines 186–216 evaluates synthetic test vectors against a Kotlin reimplementation of the decision tree model (`KotlinModel.evaluate`), not against C++ JNI output or Python `predict_proba`.
   - **Model Accuracy:** State plainly: **no empirical accuracy figures exist** [unproven].
-- **OSINT Verification:** `OllamaClient.kt` and `OsintClassifierWorker.kt` exist in source [verified-in-repo].
-  - **Inference Location:** The LLM runs strictly on a local LAN Ollama server or a free cloud fallback, **never on the phone** [verified-in-repo].
-  - **Verdict Logic:** Deterministic Kotlin code makes the final verdict, requiring at least two independent trusted sources to designate an app as `malicious` [verified-in-repo].
+- **OSINT Verification (Local Ollama):**
+  - `OllamaClient.kt` lines 35–62 sends package name, cert SHA-256, permissions, and trackers to `http://127.0.0.1:11434/api/generate` with model `llama3.2` and receives `{verdict, confidence, reasoning}`.
+  - Note on endpoint: Code comments and logs describe this as "local LAN" (`OsintClassifierWorker.kt` lines 54, 67, 85), but the configured URL is loopback `http://127.0.0.1:11434` (`OllamaClient.kt` line 35).
+  - `OsintClassifierWorker.kt` lines 76–77 formats the result as `"VERDICT:confidence"` and stores it directly into Room via `AppScanResultDao.updateOsintVerdict`.
+  - Pre-query gating: Trusted-publisher cert shortcut (`OsintClassifierWorker.kt` line 41, with only `"com.google.android.gms"` pinned in `TRUSTED_PUBLISHER_CERTS` at lines 116–120) and a package-name sensitive-keyword denylist (`OsintClassifierWorker.kt` line 48, lines 103–106).
+
+### PLANNED (per docs/architecture.md, not implemented)
+- **Deterministic Two-Source Consensus:** Final verdict logic requiring at least two Tier-1/2 independent sources to declare an app `malicious` is not implemented in code [planned].
+- **Cloud Fallback:** Free cloud fallback LLM for when the local Ollama instance is unreachable is not implemented in code [planned].
+- **Public Report Evidence Extraction:** Extraction of strict JSON `(claim, source_url, evidence_type)` from stripped public web/report text is not implemented in code [planned].
+- **Online Hash Lookups:** VirusTotal and MalwareBazaar hash check workers are not implemented in code [planned].
 
 ## Open Items
 1. **Walkthrough Overclaims Correction:** Correct M4-B walkthrough text to match raw evidence (Item 6) [open-task].
