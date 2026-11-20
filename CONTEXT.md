@@ -2,7 +2,7 @@
 
 > **Read this first.**
 
-This repository contains **Privacy Guard**, an on-device, privacy-first Android security and privacy management utility targeting modern Android (Android 15+).
+This repository contains **Privacy Guard**, an on-device, privacy-first Android security and privacy management utility targeting modern Android (Android 14+, minSdk 34 per `android/app/build.gradle.kts:55`).
 
 ## Project Documents
 - [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) — Target hardware (Moto G54 5G), Android 15 environment, Shizuku privilege configuration, host setup, and external evidence locations.
