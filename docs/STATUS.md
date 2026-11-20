@@ -41,8 +41,8 @@ The following areas remain unverified or have returned inconclusive results:
 - **Online Hash Lookups:** VirusTotal and MalwareBazaar hash check workers are not implemented in code [planned].
 
 ## Open Items
-1. **Walkthrough Overclaims Correction:** Correct M4-B walkthrough text to match raw evidence (Item 6) [open-task].
-2. **M4-B Ledger Backfill:** Backfill `C:\Projects\_smoke_m4b\ledger.txt` with entries for `pm trim-caches` and process cleanup `pkill` calls [open-task].
+1. **Walkthrough Overclaims Correction:** DONE in commit a87d59b.
+2. **M4-B Ledger Incomplete:** M4-B ledger is incomplete: pm trim-caches and pkill were not logged and have no raw files; do not backfill invented entries; add a note line to ledger.txt only.
 3. **M4-C Per-App Cache Probe:** Probe per-app cache clearing via hidden API `IPackageManager.deleteApplicationCacheFilesAsUser` invoked in-process from the Shizuku `UserService` with a concrete observer callback; measure storage delta using `StorageStatsManager` (not `dumpsys diskstats`); fallback to device-wide "free up to X GB" via `pm trim-caches` [planned-probe].
 4. **Documentation Debt:** Section 4 of `docs/architecture.md` policy status enum omits `APPLIED_PARTIAL` and `SUPERSEDED` which exist in `PolicyOp.kt` [docs-debt].
 5. **H1 Residue:** Explicit `allow` appops entries created during M3.5-H probes for `COARSE_LOCATION` / `RECORD_AUDIO` (`com.ludo.king`) and `POST_NOTIFICATION` (`com.rarlab.rar`) remain on-device; not reset by design to avoid mutating untracked state [known-residue].
