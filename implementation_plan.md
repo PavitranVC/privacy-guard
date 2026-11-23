@@ -176,3 +176,85 @@ Instead, follow this manual deployment and execution flow:
 ### 6. Operational Risks & Invariants
 - **NEVER use `./gradlew connectedAndroidTest`:** Gradle's built-in target executes `pm uninstall` before installing test artifacts, destroying Shizuku pairing tokens, user-granted binder authorization, and Room database records.
 - **Capability Row Cleanup:** Ensure any capability probe overrides or test policy rows injected into Room during hardware instrumentation runs are cleaned up or isolated to test package identifiers (`com.ansangha.drdriving`, etc.), leaving zero orphaned policy rows.
+
+---
+
+## M4-C: Per-App Cache Clear Probe (DRAFT - AWAITING OWNER APPROVAL)
+
+### 1. AIDL & Build/TOML Specification
+- **CLI vs In-Process Invocation:**
+  In M4-B, executing `pm clear --cache-only --user 0 <pkg>` via the shell process builder timed out after 10 seconds (exit code 124) on hardware (`com.ansangha.drdriving` and `com.rarlab.rar`). The underlying Android package cache deletion API is an in-process IPC method on `IPackageManager`, not a responsive command-line binary.
+- **AIDL Interface Evolution:**
+  Existing `IShellService.aidl` provides only `ShellResult exec(in String[] cmd)` and `void destroy()`. In-process execution within the bound Shizuku `UserService` requires extending `IShellService.aidl`:
+  ```aidl
+  package org.privacyguard.android.service;
+
+  import org.privacyguard.android.service.ShellResult;
+
+  interface IShellService {
+      ShellResult exec(in String[] cmd) = 1;
+      boolean clearPackageCache(in String pkg, int userId) = 2;
+      void destroy() = 16777114;
+  }
+  ```
+- **Build & TOML Changes:**
+  - `android/gradle/libs.versions.toml`: **NO changes required**. Dependencies `hidden-stub = "4.4.0"`, `hidden-compat = "4.4.0"`, `refine = "4.4.0"`, and `hiddenapibypass = "6.1"` are already pinned (lines 10–13, 51–55).
+  - `android/app/build.gradle.kts`: **NO changes required**. Plugin `alias(libs.plugins.refine)` (line 9) and dependencies `compileOnly(libs.hidden.stub)`, `implementation(libs.hidden.compat)`, `implementation(libs.refine.runtime)`, `compileOnly(libs.refine.annotation)`, and `implementation(libs.hiddenapibypass)` are already present (lines 180–184).
+
+### 2. Hidden-API Stubs & Reflection Architecture
+- **Target System API:**
+  `IPackageManager.deleteApplicationCacheFilesAsUser(String packageName, int userId, IPackageDataObserver observer)` (or `deleteApplicationCacheFiles(String packageName, IPackageDataObserver observer)` on legacy/compat signatures).
+- **Execution Context:**
+  Runs inside `ShizukuShellService`, hosted in the Shizuku `UserService` process running under package `com.android.shell` (UID 2000).
+- **Stubs vs Reflection (`UNPROVEN`):**
+  - Whether `dev.rikka.hidden:stub:4.4.0` exposes `IPackageManager.deleteApplicationCacheFilesAsUser` and `IPackageDataObserver` on API 35 compile-time classpath without signature mismatches is `UNPROVEN`.
+  - If stub definitions are missing or incomplete, invocation will utilize `org.lsposed.hiddenapibypass.HiddenApiBypass`:
+    1. Obtain the `package` service binder: `android.os.ServiceManager.getService("package")`.
+    2. Obtain the `IPackageManager` stub interface via `IPackageManager.Stub.asInterface(...)` or reflective `HiddenApiBypass.invoke`.
+    3. Implement `IPackageDataObserver` via a dynamic Binder proxy (`java.lang.reflect.Proxy`) or local AIDL stub to intercept `onRemoveCompleted(String packageName, boolean succeeded)`.
+    4. Await callback completion using a `CountDownLatch(1)` with a strict 5-second timeout.
+
+### 3. Validation & Safe Allowlist Enforcement
+- **Input Validation:**
+  Before executing cache deletion, `ShizukuShellService.clearPackageCache(pkg, userId)` must enforce:
+  1. `userId >= 0`.
+  2. Package name matches `PKG_REGEX` (`^[a-zA-Z0-9_]+\.[a-zA-Z0-9_.]+$`).
+- **Safety Boundaries & Denylist:**
+  - Reject system packages: `android`, `com.android.systemui`, `com.android.settings`.
+  - Reject telephony / messaging / dialer components.
+  - Reject Google Mobile Services: `com.google.android.gms`, `com.android.vending`, `com.google.android.gsf`.
+  - Reject Shizuku itself: `moe.shizuku.privileged.api`.
+  - Reject Privacy Guard itself: `org.privacyguard.android`.
+- **Probe Allowlist:**
+  During M4-C probe validation, execution is hard-gated strictly to the three designated test packages:
+  `com.ansangha.drdriving`, `com.ludo.king`, `com.rarlab.rar`.
+
+### 4. Storage Measurement (`StorageStatsManager`)
+- **Measurement Protocol:**
+  Query `StorageStatsManager.queryStatsForPackage(UUID storageUuid, String packageName, UserHandle user)` immediately before and after cache deletion to record `getCacheBytes()`, `getDataBytes()`, and `getAppBytes()`. Delta in `getCacheBytes()` determines bytes freed.
+- **Permission Evidence (Item 2 Hardware Verification):**
+  - `StorageStatsManager.queryStatsForPackage` requires `android.permission.PACKAGE_USAGE_STATS`.
+  - Raw device evidence from `dumpsys package com.android.shell` on Moto G54 Android 15 (`shell_pkg_dumpsys.txt`) proves `com.android.shell` (UID 2000) holds:
+    - `android.permission.GET_PACKAGE_SIZE: granted=true` (lines 865, 1439)
+    - `android.permission.PACKAGE_USAGE_STATS: granted=true` (lines 885, 1459)
+    - `android.permission.DELETE_CACHE_FILES: granted=true` (lines 952, 1526)
+    - `android.permission.CLEAR_APP_CACHE: granted=true` (lines 1033, 1607)
+    - `android.permission.INTERACT_ACROSS_USERS: granted=true` (lines 971, 1545)
+    - `android.permission.INTERACT_ACROSS_USERS_FULL: granted=true` (lines 876, 1450)
+  - Because `ShizukuShellService` runs in UID 2000 (`com.android.shell`), it already holds `PACKAGE_USAGE_STATS` and cache management permissions without manual user prompts.
+- **`UNPROVEN` Invariants:**
+  - Whether `StorageStatsManager` reflects storage deltas immediately upon cache deletion or returns cached figures until system server reconciliation is `UNPROVEN` on hardware.
+
+### 5. Fallback Mechanism (`pm trim-caches`)
+- **Device-Wide Fallback:**
+  If per-app cache deletion fails or is unsupported on specific OEM builds, fallback executes `pm trim-caches <desired_free_bytes>` (e.g. `200000000000`).
+- **Scope & Warning Invariant:**
+  `pm trim-caches` is strictly **DEVICE-WIDE**. It cannot target a single package.
+  The UI must display an explicit warning:
+  *"Device-wide cache trimming frees temporary files across all installed applications. Individual application cache selection is not supported in fallback mode."*
+
+### 6. Probe Constraints & Safety Rules
+- On-device probe testing restricted exclusively to `com.ansangha.drdriving`, `com.ludo.king`, and `com.rarlab.rar`.
+- Every probe execution logged in `C:\Projects\_smoke_m4c\ledger.txt` with timestamp, exact command/API, exit code, matching undo, and dedicated raw output captures.
+- **NEVER** run plain `pm clear <pkg>` without `--cache-only`.
+
