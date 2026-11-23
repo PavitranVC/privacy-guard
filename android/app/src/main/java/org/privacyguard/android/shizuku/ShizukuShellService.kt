@@ -178,6 +178,12 @@ class ShizukuShellService : IShellService.Stub() {
                 }
             }
 
+            val isSelfUsageStatsGrant = binary == "cmd" && subcmd == "appops" &&
+                    cmd.size == 6 && cmd[2] == "set" &&
+                    cmd[3] == "org.privacyguard.android" &&
+                    cmd[4] == "GET_USAGE_STATS" &&
+                    cmd[5] in setOf("allow", "default")
+
             // Validate package, component, and keyword arguments
             for (i in 2 until cmd.size) {
                 val arg = cmd[i]
@@ -187,6 +193,11 @@ class ShizukuShellService : IShellService.Stub() {
                         return "Invalid component argument: $arg"
                     }
                 } else if (arg.isNotEmpty() && arg.all { it in '0'..'9' }) {
+                    continue
+                } else if (arg == "GET_USAGE_STATS") {
+                    if (!isSelfUsageStatsGrant) {
+                        return "GET_USAGE_STATS is only permitted for self package grant: cmd appops set org.privacyguard.android GET_USAGE_STATS [allow|default]"
+                    }
                     continue
                 } else if (ALLOWED_KEYWORDS.contains(arg)) {
                     continue

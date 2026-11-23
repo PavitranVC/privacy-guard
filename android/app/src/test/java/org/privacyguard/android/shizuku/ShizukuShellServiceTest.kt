@@ -272,4 +272,36 @@ class ShizukuShellServiceTest {
         assertNotNull(errExtra)
         assertTrue(errExtra!!.contains("Invalid pm trim-caches syntax"))
     }
+
+    @Test
+    fun `test self GET_USAGE_STATS appops validations`() {
+        // Valid self grants
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "org.privacyguard.android", "GET_USAGE_STATS", "allow")
+        ))
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "org.privacyguard.android", "GET_USAGE_STATS", "default")
+        ))
+
+        // Non-self package rejected
+        val errOtherPkg = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "com.example.other", "GET_USAGE_STATS", "allow")
+        )
+        assertNotNull(errOtherPkg)
+        assertTrue(errOtherPkg!!.contains("GET_USAGE_STATS"))
+
+        // Disallowed mode (ignore) rejected
+        val errIgnore = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "org.privacyguard.android", "GET_USAGE_STATS", "ignore")
+        )
+        assertNotNull(errIgnore)
+        assertTrue(errIgnore!!.contains("GET_USAGE_STATS"))
+
+        // Extra arguments rejected
+        val errExtra = ShizukuShellService.validateCommand(
+            arrayOf("cmd", "appops", "set", "org.privacyguard.android", "GET_USAGE_STATS", "allow", "extra")
+        )
+        assertNotNull(errExtra)
+        assertTrue(errExtra!!.contains("GET_USAGE_STATS"))
+    }
 }
