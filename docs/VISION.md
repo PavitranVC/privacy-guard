@@ -24,7 +24,7 @@ Privacy Guard is an on-device, privacy-first Android security and management uti
 
 ### What Is Partial
 - **OSINT Verification:** `OllamaClient.kt` successfully sends structured payloads to a loopback Ollama instance (`http://127.0.0.1:11434`) and stores results directly in Room, with trusted-publisher bypass and sensitive keyword filtering; however, it lacks multi-source consensus, cloud fallback, and public text parsing [verified-in-repo, STATUS.md].
-- **Network Isolation Fallback:** The isolation ladder falls back to background hibernation if Chain 3 fails, but chain 9 fallback remains unverified [verified-in-repo, architecture.md].
+- **Network Isolation Fallback:** The isolation ladder falls back to background hibernation if Chain 3 fails; chain 9 fallback is measured unsupported (`unknown command`) on the Moto G54 test device [measured, matrix.csv].
 
 ### What Is Not Yet Proven
 - **Actual AppOps Runtime Enforcement:** Setting AppOps to `ignore` alters the reported mode in `cmd appops get`, but whether the Android 15 system server actively halts background execution or leaks operations is completely unproven on-device [unproven, STATUS.md].

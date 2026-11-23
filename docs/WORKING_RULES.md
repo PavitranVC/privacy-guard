@@ -36,7 +36,7 @@ These rules are mandatory for all contributors and agentic assistants working on
      1. `com.ansangha.drdriving`
      2. `com.ludo.king`
      3. `com.rarlab.rar`
-   - **NEVER** touch system applications, launchers, Google Mobile Services (GMS), telephony, messaging, or Shizuku itself [GEMINI.md:6; owner-decision, M3.5-G prompt R3].
+   - **NEVER** touch system applications, launchers, Google Mobile Services (GMS), telephony, messaging, or Shizuku itself [owner-decision, M3.5-G prompt R3].
    - **NEVER** run `adb` commands that extract personal inventories, Wi-Fi SSIDs, accounts, or private device logs [GEMINI.md:6].
 
 7. **Prohibited Android Commands:**
@@ -49,4 +49,4 @@ These rules are mandatory for all contributors and agentic assistants working on
    - Report any unexpected behaviors or defects found in existing code, but do not modify them unless explicitly instructed.
 
 9. **Independent Audit Principle:**
-   - The external auditor (Claude) verifies implementations directly against git commit ranges and repo source code, not against agent summaries or chat transcripts [owner-decision, CONTEXT.md:16].
+   - The external auditor (Claude) verifies implementations directly against git commit ranges and repo source code, not against agent summaries or chat transcripts [owner-decision, CONTEXT.md:17].
