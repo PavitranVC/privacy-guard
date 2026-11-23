@@ -205,4 +205,71 @@ class ShizukuShellServiceTest {
         assertNotNull(error)
         assertTrue(error!!.contains("garbage"))
     }
+
+    @Test
+    fun `test pm trim-caches validations`() {
+        // Valid calls
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "84623175680")
+        ))
+        assertNull(ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "1048576")
+        ))
+
+        // Missing argument (size == 2)
+        val errMissing = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches")
+        )
+        assertNotNull(errMissing)
+        assertTrue(errMissing!!.contains("Invalid pm trim-caches syntax"))
+
+        // Empty argument
+        val errEmpty = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "")
+        )
+        assertNotNull(errEmpty)
+        assertTrue(errEmpty!!.contains("Invalid pm trim-caches syntax"))
+
+        // Zero
+        val errZero = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "0")
+        )
+        assertNotNull(errZero)
+        assertTrue(errZero!!.contains("must be positive Long"))
+
+        // Negative
+        val errNeg = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "-100")
+        )
+        assertNotNull(errNeg)
+        assertTrue(errNeg!!.contains("Invalid pm trim-caches syntax"))
+
+        // Unit suffix (non-digits like 500M)
+        val errSuffix = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "500M")
+        )
+        assertNotNull(errSuffix)
+        assertTrue(errSuffix!!.contains("Invalid pm trim-caches syntax"))
+
+        // Shell metacharacters
+        val errMeta = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "100;id")
+        )
+        assertNotNull(errMeta)
+        assertTrue(errMeta!!.contains("Invalid pm trim-caches syntax"))
+
+        // Overflow
+        val errOverflow = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "99999999999999999999999")
+        )
+        assertNotNull(errOverflow)
+        assertTrue(errOverflow!!.contains("must be positive Long"))
+
+        // Extra trailing arguments
+        val errExtra = ShizukuShellService.validateCommand(
+            arrayOf("pm", "trim-caches", "1048576", "extra")
+        )
+        assertNotNull(errExtra)
+        assertTrue(errExtra!!.contains("Invalid pm trim-caches syntax"))
+    }
 }

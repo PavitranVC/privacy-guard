@@ -104,6 +104,7 @@ class ShizukuShellService : IShellService.Stub() {
             "pm default-state",
             "pm enable",
             "pm disable",
+            "pm trim-caches",
             "am kill",
             "am set-standby-bucket",
             "am get-standby-bucket",
@@ -156,6 +157,18 @@ class ShizukuShellService : IShellService.Stub() {
                 if (cmd.size != 5 || cmd[2] != "--user" || cmd[3].isEmpty() || !cmd[3].all { it in '0'..'9' } || !COMPONENT_REGEX.matches(cmd[4])) {
                     return "Invalid component-only pm syntax: expected 'pm $subcmd --user <id> <pkg/component>', got: ${cmd.joinToString(" ")}"
                 }
+            }
+
+            // Enforce strict pm trim-caches syntax
+            if (binary == "pm" && subcmd == "trim-caches") {
+                if (cmd.size != 3 || cmd[2].isEmpty() || !cmd[2].all { it in '0'..'9' }) {
+                    return "Invalid pm trim-caches syntax: expected 'pm trim-caches <positive-bytes>', got: ${cmd.joinToString(" ")}"
+                }
+                val targetBytes = cmd[2].toLongOrNull()
+                if (targetBytes == null || targetBytes <= 0L) {
+                    return "Invalid pm trim-caches target bytes: must be positive Long, got: ${cmd[2]}"
+                }
+                return null
             }
 
             // Enforce strict am get-standby-bucket syntax
