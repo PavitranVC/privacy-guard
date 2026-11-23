@@ -260,9 +260,9 @@ Instead, follow this manual deployment and execution flow:
 
 ### 1. Architectural Foundation & Grounding in M4-C Evidence
 Milestone M4-C hardware probes on Moto G54 (Android 15) established two definitive facts:
-1. `pm clear --cache-only --user 0 <pkg>` is **non-viable**: it hangs indefinitely in the system server (4/4 timeouts up to 120s; 0 bytes freed) on multiple distinct packages.
+1. `pm clear --cache-only --user 0 <pkg>` is **non-viable**: it timed out 4/4 times up to 120s (root cause UNPROVEN) on multiple distinct packages.
 2. `pm trim-caches <targetBytes>` is **viable device-wide**: executed in 1.9s, reclaiming +555,824 KB (~542.8 MB) of storage measured via `df -k /data`.
-3. Main-process `StorageStatsManager.queryStatsForPackage` is **viable and fast**: requires `PACKAGE_USAGE_STATS` (already declared in `AndroidManifest.xml` in M4-C commit `e6989a4`) and accurately reports live per-app `appBytes`, `dataBytes`, and `cacheBytes` in under 100 ms without AIDL or IPC overhead.
+3. Main-process `StorageStatsManager.queryStatsForPackage` is **viable and fast**: requires `PACKAGE_USAGE_STATS` (already declared in `AndroidManifest.xml` in M4-C commit `e6989a4`) and accurately reports per-app `appBytes`, `dataBytes`, and `cacheBytes` in under 100 ms without AIDL or IPC overhead.
 
 ### 2. Per-App Cache Breakdown (Read-Only, Fast)
 - **Mechanism:** Main application process queries `StorageStatsManager.queryStatsForPackage(StorageManager.UUID_DEFAULT, pkg, Process.myUserHandle())`.
@@ -309,7 +309,7 @@ Milestone M4-C hardware probes on Moto G54 (Android 15) established two definiti
 
 ### 5. Honest UI & Verification Constraints
 - Distinguish clearly between:
-  1. *Per-App Reported Cache:* Live metrics reported by `StorageStatsManager`.
+  1. *Per-App Reported Cache:* Metrics reported by `StorageStatsManager`.
   2. *Device-Wide Measured Delta:* Actual bytes reclaimed across `/data` post-trim.
 - Zero background scanning loops: stats queries run strictly on-demand when the space optimiser screen is opened.
 
