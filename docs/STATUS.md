@@ -7,13 +7,17 @@ The following capabilities have been observed and verified via direct command ex
 - **Runtime Permissions:** Runtime permission grant and revoke (`pm grant <pkg> <permission>`, `pm revoke <pkg> <permission>`) succeed under shell privilege [measured].
 - **Standby Buckets:** App standby buckets `10` (active), `20` (working_set), `30` (frequent), `40` (rare), `45` (restricted), and `50` (never) can be set via `am set-standby-bucket <pkg>` [measured]. (Value `5` is rejected by the system server).
 - **Reported AppOps Mode:** `cmd appops set --uid <uid> <OP> ignore` modifies the reported mode in system server query results (`cmd appops get`), and `allow` restores it to baseline [measured].
-- **Safe Instrumentation Workflow:** The manual `androidTest` deployment flow (`assembleDebug`, `assembleDebugAndroidTest`, `adb install -r`, `adb install -r -t`, `am instrument`, `adb uninstall *.test`) executes instrumentation tests (`OK (2 tests)` in 0.024s) without wiping user data or invalidating Shizuku authorization [measured].
+- **Safe Instrumentation Workflow:** The manual `androidTest` deployment flow (`assembleDebug`, `assembleDebugAndroidTest`, `adb install -r`, `adb install -r -t`, `am instrument`, `adb uninstall *.test`) executes instrumentation tests without wiping user data or invalidating Shizuku authorization [measured].
+- **StorageStatsManager Query:** Main-process `StorageStatsManager.queryStatsForPackage` via declared `PACKAGE_USAGE_STATS` + `cmd appops set org.privacyguard.android GET_USAGE_STATS allow` accurately queries live per-package `appBytes`, `dataBytes`, and `cacheBytes` (`StorageStatsProbeTest`, `p5`, `p14`, `p23`, `p26`) [measured].
+- **Shell Privilege Package Grants:** `com.android.shell` (UID 2000) holds granted permissions `android.permission.DELETE_CACHE_FILES`, `android.permission.ACCESS_CACHE_FILESYSTEM`, and `android.permission.PACKAGE_USAGE_STATS` (`dumpsys package com.android.shell`, `shell_pkg_dumpsys.txt`) [measured].
+- **Hidden API Stub Inspection:** `javap` inspection confirms `deleteApplicationCacheFiles*` and `IPackageDataObserver` are absent from `dev.rikka.hidden:stub:4.4.0` [verified-in-repo].
+- **Device-Wide Cache Trimming:** `pm trim-caches <targetBytes>` executed synchronously in 1.9s (exit code 0); measured device `/data` available space increase of +555,824 KB (~542.8 MB) from 82,115,532 KB to 82,671,356 KB (`p22` vs `p25`) with target package caches untouched (LRU eviction device-wide) [measured].
 
 ## Unproven Hypotheses & Inconclusive Probes
 The following areas remain unverified or have returned inconclusive results:
 - **Actual AppOps Enforcement:** Whether setting AppOps to `ignore` actually blocks operations (e.g., clipboard read, notifications, background execution) is completely unverified. Only the *reported mode* in `dumpsys appops` / `cmd appops get` was observed [unproven].
-- **Per-App Cache Clearing:** Whether per-app cache clearing is viable under shell privilege is unproven [unproven].
-- **`pm clear --cache-only` Behavior:** Two executions (`com.ansangha.drdriving` and `com.rarlab.rar`) failed to return within 10 seconds (exit code 124). The root cause of the timeout is NOT established [unproven].
+- **Per-App Cache Clearing via CLI:** `pm clear --cache-only --user 0 <pkg>` is non-viable on Android 15 / Moto G54; 4/4 timeouts across 2 packages (10s × 2 in M4-B on `com.ansangha.drdriving` and `com.rarlab.rar`; 120s on `com.ansangha.drdriving` in `p6`; 60s untouched control on `com.rarlab.rar` in `p15`), 0 bytes freed across all attempts (`cacheBytes` strictly unchanged). The root cause of the timeout remains unestablished [unproven].
+- **Per-App Cache Trim Invariance:** In `pm trim-caches` probe (`p22`–`p26`), device `/data` free space rose by 555,824 KB (~542.8 MB), while per-app caches for recently probed test targets (`com.ansangha.drdriving`, `com.ludo.king`, `com.rarlab.rar`) showed 0 bytes delta due to LRU eviction behavior [measured].
 - **Storage Reporting Freshness:** Whether `dumpsys diskstats` displays live real-time sizes or cached calculation values is untested (suspected cached) [unproven].
 
 ### M4-B Cache-Clear Probe Observations
@@ -42,8 +46,8 @@ The following areas remain unverified or have returned inconclusive results:
 
 ## Open Items
 1. **Walkthrough Overclaims Correction:** DONE in commit a87d59b.
-2. **M4-B Ledger Incomplete:** M4-B ledger is incomplete: pm trim-caches and pkill were not logged and have no raw files; do not backfill invented entries; add a note line to ledger.txt only.
-3. **M4-C Per-App Cache Probe:** Probe per-app cache clearing via hidden API `IPackageManager.deleteApplicationCacheFilesAsUser` invoked in-process from the Shizuku `UserService` with a concrete observer callback; measure storage delta using `StorageStatsManager` (not `dumpsys diskstats`); fallback to device-wide "free up to X GB" via `pm trim-caches` [planned-probe].
+2. **M4-B Ledger Incomplete:** DONE (note appended to `_smoke_m4b/ledger.txt` regarding unlogged trim-caches and pkill).
+3. **M4-C Cache-Clear Probe:** DONE (Phase 0, 0b, Stage 0, Stage 0b, and Item 1 completed; `pm clear --cache-only` non-viable on Android 15 / Moto G54 with 4/4 timeouts; `pm trim-caches` viable device-wide reclaiming 542.8 MB; `StorageStatsManager` viable for per-app stats).
 4. **Documentation Debt:** Section 4 of `docs/architecture.md` policy status enum omits `APPLIED_PARTIAL` and `SUPERSEDED` which exist in `PolicyOp.kt` [docs-debt].
 5. **H1 Residue:** Explicit `allow` appops entries created during M3.5-H probes for `COARSE_LOCATION` / `RECORD_AUDIO` (`com.ludo.king`) and `POST_NOTIFICATION` (`com.rarlab.rar`) remain on-device; not reset by design to avoid mutating untracked state [known-residue].
 6. **Edge Case N5:** A re-queued policy operation (after drift or package update) that succeeds via chain3 overwrites `observed`, losing earlier step-3 priors (candidate for M4) [known-defect].

@@ -292,3 +292,22 @@ On-device smoke test on Moto G54 / Android 15 reported that `pm disable-user --u
 | `com.ansangha.drdriving` | 85 | 30,680,576 | 7,163,904 | 7,163,904 | 1,196,032 | 1,196,032 | 10,013 ms | TIMEOUT (124) |
 | `com.rarlab.rar` | 246 | 8,205,824 | 1,048,576 | 1,048,576 | 184,320 | 184,320 | 10,018 ms | TIMEOUT (124) |
 
+## Milestone M4-C (Cache-Clear Probe & Storage Measurement)
+- **Commits:** `5ffb536`..`cc849c9`
+  - `5ffb536`: Drafted M4-C probe plan in `implementation_plan.md`.
+  - `67569bd`: Added `docs/REPO_MAP.md`.
+  - `c8c9b67`: Added `tools/digest.ps1`.
+  - `5abfabd`: Fixed doc citations and line references.
+  - `cf64a39`: Revised M4-C plan with Stage 0 and strict constraints.
+  - `05554f0`: Fixed `docs/VISION.md` chain9 citation.
+  - `e6989a4`: Declared `android.permission.PACKAGE_USAGE_STATS` in `AndroidManifest.xml`.
+  - `cc849c9`: Added `StorageStatsProbeTest.kt` on-device instrumentation test.
+- **Ledgers & Evidence:**
+  - `_smoke_m4c_p0/ledger.txt` (read-only Phase 0 queries, `shell_pkg_dumpsys.txt`).
+  - `_smoke_m4c/ledger.txt` (`p1`–`p28` covering Stage 0, Stage 0b, and Item 1).
+- **Proven Hardware Measurements (Moto G54 / Android 15):**
+  - **StorageStatsManager:** Queried in main app process via `PACKAGE_USAGE_STATS` + `cmd appops set org.privacyguard.android GET_USAGE_STATS allow`. Accurately read live `appBytes`, `dataBytes`, and `cacheBytes` for `com.ansangha.drdriving` (98,304 bytes), `com.ludo.king` (65,536 bytes), and `com.rarlab.rar` (155,648 bytes) (`p5`, `p14`, `p23`, `p26`).
+  - **`pm clear --cache-only` Non-Viability:** 4/4 timeouts across 2 packages (10s × 2 in M4-B; 120s timeout in `p6` on `com.ansangha.drdriving`; 60s timeout in `p15` on `com.rarlab.rar`). 0 bytes freed across all attempts; cache remained strictly identical before and after. Root cause remains unproven.
+  - **`pm trim-caches` Effectiveness:** Device-wide `pm trim-caches 84623175680` (+512 MB above free space) completed in 1,900 ms (exit code 0); measured `df -k /data` available storage increase of +555,824 KB (~542.8 MB) from 82,115,532 KB to 82,671,356 KB (`p22` vs `p25`). Probed test package caches were untouched (LRU device-wide eviction).
+  - **Bytecode Inspection:** Verified via `javap` that `deleteApplicationCacheFiles*` and `IPackageDataObserver` are absent in `dev.rikka.hidden:stub:4.4.0`.
+
