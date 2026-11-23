@@ -254,3 +254,63 @@ Instead, follow this manual deployment and execution flow:
 - **NEVER** run plain `pm clear <pkg>` without `--cache-only`.
 - **NEVER** run `gradlew connectedAndroidTest`.
 
+---
+
+## M4-D: Fast Space Optimiser (DRAFT - AWAITING OWNER APPROVAL)
+
+### 1. Architectural Foundation & Grounding in M4-C Evidence
+Milestone M4-C hardware probes on Moto G54 (Android 15) established two definitive facts:
+1. `pm clear --cache-only --user 0 <pkg>` is **non-viable**: it hangs indefinitely in the system server (4/4 timeouts up to 120s; 0 bytes freed) on multiple distinct packages.
+2. `pm trim-caches <targetBytes>` is **viable device-wide**: executed in 1.9s, reclaiming +555,824 KB (~542.8 MB) of storage measured via `df -k /data`.
+3. Main-process `StorageStatsManager.queryStatsForPackage` is **viable and fast**: requires `PACKAGE_USAGE_STATS` (already declared in `AndroidManifest.xml` in M4-C commit `e6989a4`) and accurately reports live per-app `appBytes`, `dataBytes`, and `cacheBytes` in under 100 ms without AIDL or IPC overhead.
+
+### 2. Per-App Cache Breakdown (Read-Only, Fast)
+- **Mechanism:** Main application process queries `StorageStatsManager.queryStatsForPackage(StorageManager.UUID_DEFAULT, pkg, Process.myUserHandle())`.
+- **Usage Access Onboarding Flow:**
+  - Check whether `AppOpsManager.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName)` returns `MODE_ALLOWED`.
+  - If allowed: immediately query storage statistics.
+  - If not allowed:
+    - If Shizuku is active and authorized: execute `cmd appops set org.privacyguard.android GET_USAGE_STATS allow` via `PrivilegeBackend` (already proven in M4-C probes `p4`, `p13`, `p21`).
+    - If Shizuku is inactive: prompt user with standard intent `Settings.ACTION_USAGE_ACCESS_SETTINGS`.
+- **Planned New Kotlin Source Files (Zero Build/AIDL Edits):**
+  - `android/app/src/main/java/org/privacyguard/android/storage/StorageStatsHelper.kt`: Wraps `StorageStatsManager` query logic, returning immutable `PackageStorageStats(pkg, appBytes, dataBytes, cacheBytes)`.
+  - `android/app/src/main/java/org/privacyguard/android/storage/TrimCachesCommandBuilder.kt`: Pure function command builder and validator.
+- **Build Invariants:** Zero changes to `android/gradle/libs.versions.toml`, `build.gradle.kts`, `CMakeLists.txt`, or `*.aidl`.
+
+### 3. Device-Wide Cache Trim (`pm trim-caches`)
+- **Allowlist & Prefix Validation:**
+  - Extend `ShizukuShellService.ALLOWED_COMMAND_PREFIXES` to support `pm trim-caches`.
+  - Strict validator:
+    ```kotlin
+    binary == "pm" && subcmd == "trim-caches" &&
+    cmd.size == 3 && cmd[2].isNotEmpty() && cmd[2].all { it in '0'..'9' }
+    ```
+  - Comprehensive unit test coverage in `ShizukuShellServiceTest.kt` verifying allowed numeric invocations and rejecting negative numbers, non-digits, extra arguments, and missing sizes.
+- **Target Size Calculation (No Hardcoded Defaults):**
+  - Read current free bytes using `StatFs(Environment.getDataDirectory().path).availableBytes`.
+  - User chooses a desired reclaim delta (e.g. +250 MB, +500 MB, +1 GB).
+  - Target argument is computed strictly as:
+    `targetBytes = currentFreeBytes + chosenDeltaBytes`
+- **Mandatory UI Warning Invariant:**
+  - The UI must prominently state:
+    *"Device-wide cache trimming requests the Android system to purge temporary cache files across all applications using system LRU policies. Individual application cache selection is not supported at shell privilege on Android 15."*
+- **Measurement of Freed Space:**
+  - Success is evaluated exclusively by comparing `StatFs` / `df -k /data` free space before and after execution. Exit code 0 is treated only as command termination, not as evidence of space reclaimed.
+
+### 4. Optional Per-App Deep-Link (Manual User Cleanup)
+- For users wishing to clear an individual application's cache:
+- Provide an "App Info" button next to each package in the breakdown list that opens:
+  ```kotlin
+  Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+      data = Uri.fromParts("package", pkg, null)
+  }
+  ```
+  This allows the user to tap Android's native per-app "Clear cache" button directly in System Settings without requiring any elevated privileges.
+
+### 5. Honest UI & Verification Constraints
+- Distinguish clearly between:
+  1. *Per-App Reported Cache:* Live metrics reported by `StorageStatsManager`.
+  2. *Device-Wide Measured Delta:* Actual bytes reclaimed across `/data` post-trim.
+- Zero background scanning loops: stats queries run strictly on-demand when the space optimiser screen is opened.
+
+
