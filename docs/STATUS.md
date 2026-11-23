@@ -48,7 +48,7 @@ The following areas remain unverified or have returned inconclusive results:
 1. **Walkthrough Overclaims Correction:** DONE in commit a87d59b.
 2. **M4-B Ledger Incomplete:** DONE (note appended to `_smoke_m4b/ledger.txt` regarding unlogged trim-caches and pkill).
 3. **M4-C Cache-Clear Probe:** DONE (Phase 0, 0b, Stage 0, Stage 0b, and Item 1 completed; `pm clear --cache-only` non-viable on Android 15 / Moto G54 with 4/4 timeouts; `pm trim-caches` viable device-wide reclaiming 542.8 MB; `StorageStatsManager` viable for per-app stats).
-4. **Documentation Debt:** Section 4 of `docs/architecture.md` policy status enum omits `APPLIED_PARTIAL` and `SUPERSEDED` which exist in `PolicyOp.kt` [docs-debt].
+4. **Documentation Debt:** DONE (Section 4 of `docs/architecture.md` synced with `PolicyOp.kt` status enum).
 5. **H1 Residue:** Explicit `allow` appops entries created during M3.5-H probes for `COARSE_LOCATION` / `RECORD_AUDIO` (`com.ludo.king`) and `POST_NOTIFICATION` (`com.rarlab.rar`) remain on-device; not reset by design to avoid mutating untracked state [known-residue].
 6. **Edge Case N5:** A re-queued policy operation (after drift or package update) that succeeds via chain3 overwrites `observed`, losing earlier step-3 priors (candidate for M4) [known-defect].
 
