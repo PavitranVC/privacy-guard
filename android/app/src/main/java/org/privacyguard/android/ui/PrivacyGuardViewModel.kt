@@ -29,6 +29,9 @@ import org.privacyguard.android.shield.ShieldTelemetry
 import org.privacyguard.android.shield.TunnelStatus
 import org.privacyguard.android.shizuku.ShellOps
 import org.privacyguard.android.shizuku.ShizukuManager
+import org.privacyguard.android.storage.PackageStorageStats
+import org.privacyguard.android.storage.StorageStatsHelper
+import org.privacyguard.android.storage.TrimCachesCommandBuilder
 import org.privacyguard.android.trigger.ReconciliationCoordinator
 import rikka.shizuku.Shizuku
 
@@ -68,7 +71,13 @@ data class UiState(
     val selectedAppOps: List<PolicyOp> = emptyList(),
     val hasUnsafeRollback: Boolean = false,
     val isSelectedAppProtected: Boolean = false,
-    val statusMessage: String? = null
+    val statusMessage: String? = null,
+    val selectedTab: Int = 0,
+    val spaceOptimiserLoading: Boolean = false,
+    val packageStorageStats: List<PackageStorageStats> = emptyList(),
+    val hasUsageStatsAccess: Boolean = false,
+    val availableStorageBytes: Long = 0L,
+    val lastTrimResult: String? = null
 )
 
 class PrivacyGuardViewModel(
@@ -86,6 +95,12 @@ class PrivacyGuardViewModel(
     private val _activeFilter = MutableStateFlow(AppFilter.ALL)
     private val _selectedPackage = MutableStateFlow<String?>(null)
     private val _statusMessage = MutableStateFlow<String?>(null)
+    private val _selectedTab = MutableStateFlow(0)
+    private val _spaceOptimiserLoading = MutableStateFlow(false)
+    private val _packageStorageStats = MutableStateFlow<List<PackageStorageStats>>(emptyList())
+    private val _hasUsageStatsAccess = MutableStateFlow(false)
+    private val _availableStorageBytes = MutableStateFlow(0L)
+    private val _lastTrimResult = MutableStateFlow<String?>(null)
 
     // Shizuku lifecycle listeners to prevent leaks
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
@@ -154,7 +169,13 @@ class PrivacyGuardViewModel(
         _activeFilter,
         _selectedPackage,
         selectedOpsFlow,
-        _statusMessage
+        _statusMessage,
+        _selectedTab,
+        _spaceOptimiserLoading,
+        _packageStorageStats,
+        _hasUsageStatsAccess,
+        _availableStorageBytes,
+        _lastTrimResult
     ) { args: Array<Any?> ->
         val shizuku = args[0] as ShizukuStatus
         @Suppress("UNCHECKED_CAST")
@@ -169,6 +190,13 @@ class PrivacyGuardViewModel(
         @Suppress("UNCHECKED_CAST")
         val ops = args[8] as List<PolicyOp>
         val statusMsg = args[9] as String?
+        val tab = args[10] as Int
+        val spaceLoading = args[11] as Boolean
+        @Suppress("UNCHECKED_CAST")
+        val storageStats = args[12] as List<PackageStorageStats>
+        val hasUsageStats = args[13] as Boolean
+        val availableStorage = args[14] as Long
+        val trimResult = args[15] as String?
 
         // Derive filtered apps
         val filtered = apps.filter { app ->
@@ -201,7 +229,13 @@ class PrivacyGuardViewModel(
             selectedAppOps = ops,
             hasUnsafeRollback = hasUnsafe,
             isSelectedAppProtected = isProtected,
-            statusMessage = statusMsg
+            statusMessage = statusMsg,
+            selectedTab = tab,
+            spaceOptimiserLoading = spaceLoading,
+            packageStorageStats = storageStats,
+            hasUsageStatsAccess = hasUsageStats,
+            availableStorageBytes = availableStorage,
+            lastTrimResult = trimResult
         )
     }.stateIn(
         viewModelScope,
@@ -223,6 +257,136 @@ class PrivacyGuardViewModel(
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+    }
+
+    fun setSelectedTab(tab: Int) {
+        _selectedTab.value = tab
+        if (tab == 1) {
+            loadStorageStats()
+        }
+    }
+
+    fun loadStorageStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _spaceOptimiserLoading.value = true
+            try {
+                loadStorageStatsInternal()
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed loading storage stats", t)
+                _statusMessage.value = "Error reading storage stats: ${t.message}"
+            } finally {
+                _spaceOptimiserLoading.value = false
+            }
+        }
+    }
+
+    fun grantUsageAccessViaShizuku() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val isAuthorized = try {
+                Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } catch (_: Throwable) {
+                false
+            }
+            if (!isAuthorized) {
+                _statusMessage.value = "Shizuku is not running or not authorized"
+                return@launch
+            }
+            _spaceOptimiserLoading.value = true
+            _statusMessage.value = "Granting usage access via Shizuku..."
+            try {
+                val cmd = arrayOf("cmd", "appops", "set", "org.privacyguard.android", "GET_USAGE_STATS", "allow")
+                val result = shizukuManager.exec(cmd)
+                if (result.exitCode == 0) {
+                    _statusMessage.value = "Usage access granted via Shizuku"
+                    loadStorageStatsInternal()
+                } else {
+                    _statusMessage.value = "Failed granting usage access: ${result.stderr}"
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed executing self appops grant", t)
+                _statusMessage.value = "Error executing grant: ${t.message}"
+            } finally {
+                _spaceOptimiserLoading.value = false
+            }
+        }
+    }
+
+    fun trimCaches(deltaBytes: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val isAuthorized = try {
+                Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } catch (_: Throwable) {
+                false
+            }
+            if (!isAuthorized) {
+                _statusMessage.value = "Shizuku is not running or not authorized"
+                return@launch
+            }
+            _spaceOptimiserLoading.value = true
+            _statusMessage.value = "Trimming device-wide caches..."
+            try {
+                val beforeFree = StorageStatsHelper.getDataAvailableBytes()
+                val cmd = TrimCachesCommandBuilder.buildCommand(beforeFree, deltaBytes)
+                val result = shizukuManager.exec(cmd)
+                val afterFree = StorageStatsHelper.getDataAvailableBytes()
+                val freedBytes = TrimCachesCommandBuilder.computeFreedBytes(beforeFree, afterFree)
+                _availableStorageBytes.value = afterFree
+
+                val freedFormatted = formatBytesHelper(freedBytes)
+                val trimMsg = if (freedBytes > 0L) {
+                    "Measured Device-Wide Freed Space: $freedFormatted (exit code ${result.exitCode})"
+                } else {
+                    "0 B measured freed (exit code ${result.exitCode})"
+                }
+                _lastTrimResult.value = trimMsg
+                _statusMessage.value = trimMsg
+
+                if (StorageStatsHelper.hasUsageStatsAccess(getApplication())) {
+                    refreshPackageStatsInternal()
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Cache trim failed", t)
+                _statusMessage.value = "Cache trim failed: ${t.message}"
+            } finally {
+                _spaceOptimiserLoading.value = false
+            }
+        }
+    }
+
+    private fun loadStorageStatsInternal() {
+        val available = StorageStatsHelper.getDataAvailableBytes()
+        _availableStorageBytes.value = available
+
+        val hasAccess = StorageStatsHelper.hasUsageStatsAccess(getApplication())
+        _hasUsageStatsAccess.value = hasAccess
+
+        if (hasAccess) {
+            refreshPackageStatsInternal()
+        } else {
+            _packageStorageStats.value = emptyList()
+        }
+    }
+
+    private fun refreshPackageStatsInternal() {
+        val pm = getApplication<Application>().packageManager
+        val installed = try {
+            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0)).map { it.packageName }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        val stats = StorageStatsHelper.queryPackagesStats(getApplication(), installed)
+            .sortedByDescending { it.cacheBytes + it.externalCacheBytes }
+        _packageStorageStats.value = stats
+    }
+
+    private fun formatBytesHelper(bytes: Long): String {
+        if (bytes <= 0L) return "0 B"
+        val kb = bytes / 1024.0
+        if (kb < 1024.0) return String.format(java.util.Locale.US, "%.1f KB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024.0) return String.format(java.util.Locale.US, "%.1f MB", mb)
+        val gb = mb / 1024.0
+        return String.format(java.util.Locale.US, "%.2f GB", gb)
     }
 
     fun requestShizukuPermission(requestCode: Int = 1001) {

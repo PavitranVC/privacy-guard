@@ -6,9 +6,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -81,12 +87,41 @@ fun MainOverviewScreen(
                 modifier = Modifier.padding(16.dp)
             )
 
-            AppListScreen(
-                uiState = uiState,
-                onSearchQueryChange = { query -> viewModel.setSearchQuery(query) },
-                onFilterChange = { filter -> viewModel.setFilter(filter) },
-                onSelectPackage = { pkg -> viewModel.selectPackage(pkg) }
-            )
+            TabRow(
+                selectedTabIndex = uiState.selectedTab,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Tab(
+                    selected = uiState.selectedTab == 0,
+                    onClick = { viewModel.setSelectedTab(0) },
+                    text = { Text("Apps") }
+                )
+                Tab(
+                    selected = uiState.selectedTab == 1,
+                    onClick = { viewModel.setSelectedTab(1) },
+                    text = { Text("Space Optimiser") }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (uiState.selectedTab == 0) {
+                AppListScreen(
+                    uiState = uiState,
+                    onSearchQueryChange = { query -> viewModel.setSearchQuery(query) },
+                    onFilterChange = { filter -> viewModel.setFilter(filter) },
+                    onSelectPackage = { pkg -> viewModel.selectPackage(pkg) }
+                )
+            } else {
+                SpaceOptimiserScreen(
+                    uiState = uiState,
+                    onGrantUsageStatsShizuku = { viewModel.grantUsageAccessViaShizuku() },
+                    onRefreshStorage = { viewModel.loadStorageStats() },
+                    onTrimCaches = { delta -> viewModel.trimCaches(delta) }
+                )
+            }
         }
     }
 }
